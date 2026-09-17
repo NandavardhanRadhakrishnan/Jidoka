@@ -2137,8 +2137,12 @@ export function createOutlookSource(deps: OutlookDeps): TaskSource {
       });
       if (cursor) params.set("$filter", `receivedDateTime gt ${cursor}`);
 
+      // URLSearchParams#toString() encodes spaces as "+" (form-urlencoded),
+      // but Graph's OData $filter syntax expects "%20".
+      const query = params.toString().replace(/\+/g, "%20");
+
       const response = await http(
-        `https://graph.microsoft.com/v1.0/me/messages?${params.toString()}`,
+        `https://graph.microsoft.com/v1.0/me/messages?${query}`,
         { headers: { authorization: `Bearer ${token}` } },
       );
       if (!response.ok) {
