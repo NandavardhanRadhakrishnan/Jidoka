@@ -2268,7 +2268,9 @@ function scriptedProvider(replies: string[]): AiProvider & { prompts: string[] }
     id: "stub",
     prompts: [],
     async complete(req) {
-      this.prompts.push(req.messages.at(-1)?.content ?? "");
+      // AiMessage is a union; the tool_results variant has no `content`.
+      const last = req.messages.at(-1);
+      this.prompts.push(last && "content" in last ? last.content : "");
       return { text: replies[i++] ?? "", toolCalls: [] };
     },
   };
@@ -3210,7 +3212,10 @@ function scripted(replies: string[]): AiProvider & { prompts: string[] } {
     id: "stub",
     prompts: [],
     async complete(req) {
-      this.prompts.push(`${req.system ?? ""}\n${req.messages.at(-1)?.content ?? ""}`);
+      // AiMessage is a union; the tool_results variant has no `content`.
+      const last = req.messages.at(-1);
+      const content = last && "content" in last ? last.content : "";
+      this.prompts.push(`${req.system ?? ""}\n${content}`);
       return { text: replies[i++] ?? "", toolCalls: [] };
     },
   };
@@ -3329,7 +3334,7 @@ function toolCatalog(tools: ToolSpec[]): string {
       const index = t.name.indexOf(TOOL_SEPARATOR);
       const server = t.name.slice(0, index);
       const tool = t.name.slice(index + TOOL_SEPARATOR.length);
-      return `- server: ${server}, tool: ${tool} — ${t.description}\n  input schema: ${JSON.stringify(t.inputSchema)}`;
+      return `- ${t.name} (server: ${server}, tool: ${tool}) — ${t.description}\n  input schema: ${JSON.stringify(t.inputSchema)}`;
     })
     .join("\n");
 }
