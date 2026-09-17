@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Jidoka</title>
+    <style>
+      :root { color-scheme: light dark; font-family: ui-sans-serif, system-ui, sans-serif; }
+      body { margin: 0; padding: 16px; }
+      header { display: flex; justify-content: space-between; align-items: center; }
+      .board { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 12px; }
+      .column { min-width: 240px; flex: 0 0 240px; }
+      .column h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.7; }
+      .count { opacity: 0.5; }
+      .card { border: 1px solid color-mix(in srgb, currentColor 20%, transparent); border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; cursor: pointer; }
+      .card h3 { font-size: 14px; margin: 0 0 4px; }
+      .card p { font-size: 12px; margin: 0; opacity: 0.7; }
+      .card footer { font-size: 11px; opacity: 0.5; margin-top: 6px; }
+      .dialog { position: fixed; inset: 10% 20%; overflow: auto; padding: 20px; border-radius: 12px; background: Canvas; border: 1px solid color-mix(in srgb, currentColor 25%, transparent); }
+      .dialog label { display: block; margin: 10px 0; }
+      .dialog input, .dialog textarea { width: 100%; }
+      .dialog button { display: block; width: 100%; text-align: left; padding: 10px; margin: 6px 0; }
+      .dialog pre { max-height: 240px; overflow: auto; font-size: 12px; }
+      .error { color: crimson; }
+      @media (max-width: 720px) { .dialog { inset: 4%; } }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./main.tsx"></script>
+  </body>
+</html>
