@@ -21,6 +21,11 @@ export const api = {
   tasks: () => json<{ tasks: Task[] }>("/api/tasks").then((r) => r.tasks),
   types: () => json<{ types: TypeWithPipelines[] }>("/api/types").then((r) => r.types),
   pipeline: (id: string) => json<{ pipeline: Pipeline }>(`/api/pipelines/${id}`).then((r) => r.pipeline),
+  createTask: (input: { title: string; body: string }) =>
+    json<{ task: Task }>("/api/tasks", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }).then((r) => r.task),
   confirmType: (taskId: string, typeId: string) =>
     json<{ task: Task }>(`/api/tasks/${taskId}/type`, {
       method: "POST",

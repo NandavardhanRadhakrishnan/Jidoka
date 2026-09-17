@@ -2,15 +2,51 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Project status
+## Commands
 
-No code yet: the tech stack is not chosen, so there are no build, lint, or test commands. Once the project is scaffolded, add the real commands here (including how to run a single test) and update the architecture section below to match what was actually built.
+Bun is the only runtime — no Node, no Docker.
+
+```bash
+bun install
+bun run dev                                          # server + UI on http://localhost:3000
+bun test                                             # whole suite
+bun test tests/triage/triage.test.ts                 # one file
+bun test tests/triage/triage.test.ts -t "ambiguous"  # one case
+bun run typecheck                                    # tsc --noEmit, must stay clean
+bun run build                                        # single executable: ./jidoka(.exe)
+bun src/main.ts login-outlook                        # one-time Outlook device-code login
+```
+
+Run with `JIDOKA_SAMPLE_DIR=./samples` to get tasks without any credentials; `README.md` lists every environment variable.
+
+## Code map
+
+- `src/db/` — the only place that touches `bun:sqlite`; `migrations.ts` holds every table.
+- `src/domain/` — `Task`, `TaskType`, and the Zod `PipelineDefinitionSchema` (steps: `ai`, `agent`, `mcp_tool`, `branch`, `assign`, `call_pipeline`).
+- `src/repo/` — all SQL lives here, one module per table.
+- `src/ai/` — the **only** place vendor SDKs may be imported. Everything else depends on the `AiProvider` interface.
+- `src/sources/` — ingestion only: the `TaskSource` interface, the poller, the Outlook source, and the sample folder source.
+- `src/mcp/` — MCP client; read and write against external systems goes here, never into a source.
+- `src/pipeline/` — `executor.ts` runs a definition, `builder.ts` is the agent that writes one.
+- `src/orchestrator.ts` — the only module that changes a task's state. Read this first.
+- `src/api/server.ts` — thin Hono routes over the orchestrator.
+- `src/client/` — React board, served by `src/main.ts` (`/api/*` must stay a more specific route than the HTML catch-all).
+
+The implementation plan, including what was deliberately left out, is `docs/superpowers/plans/2026-09-17-jidoka-skeleton-onboarding.md`.
+
+## Conventions
+
+- Every LLM call goes through `AiProvider`; Anthropic defaults to `claude-opus-5` and must never send `budget_tokens` or `thinking`.
+- Tests use stub providers and injected `fetch`/`McpLike` seams — no test hits a network.
+- Single user, no auth. IDs are `crypto.randomUUID()`, timestamps are ISO-8601 UTC.
 
 ## What Jidoka is
 
 A task management system that pulls work items from many sources (Outlook, GitHub, etc.), uses AI to work out what kind of task each one is, runs a user-defined processing pipeline for that type (deciding AI vs human handling and preparing the task), and shows everything on a kanban board. Users bring their own AI provider. Task sources (ingestion) are third-party extensions, and all reading from and acting on external systems goes through MCP.
 
-## Architecture (planned)
+## Architecture
+
+Built as described below, except for the items under "Open decisions" and the deferred list at the end of the plan.
 
 ### Task flow
 

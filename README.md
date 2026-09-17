@@ -11,13 +11,29 @@ the task lands on the **board**, assigned to AI or a human.
 
 ## Run it
 
+No credentials beyond a model key — tasks come from the `samples/` folder and the
+board's **New task** button:
+
 ```bash
 bun install
 export ANTHROPIC_API_KEY=sk-ant-...        # or JIDOKA_AI_PROVIDER=openai + OPENAI_API_KEY
-export JIDOKA_OUTLOOK_CLIENT_ID=<azure app registration client id>
-bun src/main.ts login-outlook              # one-time device-code login
+export JIDOKA_SAMPLE_DIR=./samples
 bun run dev                                # http://localhost:3000
 ```
+
+With Outlook:
+
+```bash
+export JIDOKA_OUTLOOK_CLIENT_ID=<azure app registration client id>
+bun src/main.ts login-outlook              # one-time device-code login
+bun run dev
+```
+
+## Feeding it tasks
+
+- **Sample folder** — drop a `.json`, `.txt` or `.md` file into `JIDOKA_SAMPLE_DIR`; see `samples/README.md`.
+- **By hand** — the board's **New task** button, or `POST /api/tasks` with `{ "title": ..., "body": ... }`.
+- **Outlook** — polled on the interval once you have logged in.
 
 ## Configuration
 
@@ -30,6 +46,7 @@ bun run dev                                # http://localhost:3000
 | `JIDOKA_AI_MODEL` | `claude-opus-5` | Model id for the chosen provider |
 | `JIDOKA_OUTLOOK_CLIENT_ID` | — | Azure app registration (public client, `Mail.Read`) |
 | `JIDOKA_OUTLOOK_TENANT` | `common` | Azure tenant |
+| `JIDOKA_SAMPLE_DIR` | — | Folder polled by the sample source (e.g. `./samples`) |
 | `JIDOKA_MCP_SERVERS` | `[]` | JSON array of `{ name, command, args }` |
 
 MCP servers supply everything beyond ingestion: reading related mail, looking up

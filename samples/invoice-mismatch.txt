@@ -1,0 +1,5 @@
+Invoice 42 does not match the PO
+
+Finance flagged that invoice 42 is 30.00 higher than PO-1180.
+The supplier says the difference is a freight surcharge.
+Please confirm whether we accept it before the payment run on Friday.

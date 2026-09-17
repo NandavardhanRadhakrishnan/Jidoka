@@ -1,11 +1,12 @@
 import { Hono } from "hono";
-import { getTask, listTasks } from "../repo/tasks";
+import { findTaskBySource, getTask, insertTask, listTasks } from "../repo/tasks";
 import { getTaskType, listTaskTypes, mergeTaskType, updateTaskType } from "../repo/taskTypes";
 import { getActivePipeline, getPipeline, listPipelines } from "../repo/pipelines";
 import {
   activateTypePipeline,
   confirmTaskType,
   onboardType,
+  onTaskIngested,
   skipOnboarding,
   type AppDeps,
 } from "../orchestrator";
@@ -14,6 +15,46 @@ export function createServer(deps: AppDeps): Hono {
   const app = new Hono();
 
   app.get("/api/tasks", (c) => c.json({ tasks: listTasks(deps.db) }));
+
+  // Inject a task by hand: the quickest way to exercise triage and pipelines
+  // without waiting for a real source to poll.
+  app.post("/api/tasks", async (c) => {
+    const input = (await c.req.json()) as {
+      title?: string;
+      body?: string;
+      url?: string;
+      sourceId?: string;
+      externalId?: string;
+      metadata?: Record<string, unknown>;
+    };
+
+    if (!input.title?.trim()) return c.json({ error: "title is required" }, 400);
+
+    const sourceId = input.sourceId?.trim() || "manual";
+    const externalId = input.externalId?.trim() || crypto.randomUUID();
+    if (findTaskBySource(deps.db, sourceId, externalId)) {
+      return c.json({ error: "a task with that source and external id already exists" }, 409);
+    }
+
+    const task = insertTask(deps.db, {
+      sourceId,
+      externalId,
+      url: input.url ?? null,
+      title: input.title,
+      body: input.body ?? "",
+      metadata: input.metadata ?? {},
+    });
+
+    try {
+      return c.json({ task: await onTaskIngested(deps, task) }, 201);
+    } catch (error) {
+      // The task is stored either way; report why triage could not run.
+      return c.json(
+        { task, error: error instanceof Error ? error.message : String(error) },
+        502,
+      );
+    }
+  });
 
   app.get("/api/types", (c) =>
     c.json({

@@ -4,6 +4,7 @@ import { api, type TypeWithPipelines } from "./api";
 import { Board } from "./Board";
 import { TypeConfirm } from "./TypeConfirm";
 import { Onboarding } from "./Onboarding";
+import { NewTask } from "./NewTask";
 
 export function App() {
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -28,7 +29,10 @@ export function App() {
     <main>
       <header>
         <h1>Jidoka</h1>
-        <button onClick={() => void refresh()}>Refresh</button>
+        <div className="actions">
+          <NewTask onCreated={refresh} />
+          <button onClick={() => void refresh()}>Refresh</button>
+        </div>
       </header>
 
       <Board tasks={tasks} onSelect={setSelected} />

@@ -7,6 +7,8 @@ import { createServer } from "./api/server";
 import { onTaskIngested, type AppDeps } from "./orchestrator";
 import { startPoller } from "./sources/poller";
 import { createOutlookSource } from "./sources/outlook/source";
+import { createSampleFolderSource } from "./sources/sample/folder";
+import type { TaskSource } from "./sources/types";
 import {
   AuthPendingError,
   completeDeviceLogin,
@@ -91,15 +93,25 @@ if (import.meta.main) {
     const app = createApp(config);
     await app.mcp.connectAll(config.mcpServers);
 
+    const sources: TaskSource[] = [];
     if (config.outlook.clientId) {
-      const source = createOutlookSource({
-        db: app.deps.db,
-        clientId: config.outlook.clientId,
-        tenant: config.outlook.tenant,
-      });
+      sources.push(
+        createOutlookSource({
+          db: app.deps.db,
+          clientId: config.outlook.clientId,
+          tenant: config.outlook.tenant,
+        }),
+      );
+    }
+    if (config.sampleDir) {
+      sources.push(createSampleFolderSource({ dir: config.sampleDir }));
+      console.log(`Sample source watching ${config.sampleDir}`);
+    }
+
+    if (sources.length) {
       startPoller(
         app.deps.db,
-        [source],
+        sources,
         async (task) => {
           try {
             await onTaskIngested(app.deps, task);
@@ -110,7 +122,10 @@ if (import.meta.main) {
         config.pollIntervalMs,
       );
     } else {
-      console.warn("JIDOKA_OUTLOOK_CLIENT_ID is not set — no sources are polling");
+      console.warn(
+        "No sources configured — set JIDOKA_OUTLOOK_CLIENT_ID or JIDOKA_SAMPLE_DIR, " +
+          "or add tasks from the board",
+      );
     }
 
     Bun.serve({ port: config.port, routes: createRoutes(app) });

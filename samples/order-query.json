@@ -1,0 +1,9 @@
+{
+  "title": "Where is my order?",
+  "body": "I placed order 4821 last Tuesday and the tracking link still says label created. Can you check what happened?",
+  "url": "https://example.com/tickets/4821",
+  "metadata": {
+    "from": "customer@example.com",
+    "fromName": "A Customer"
+  }
+}

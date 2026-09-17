@@ -21,6 +21,52 @@ function app(replies: string[] = []): { deps: AppDeps; fetch: (req: Request) => 
   return { deps, fetch: async (req) => server.fetch(req) };
 }
 
+test("POST /api/tasks injects a task and runs triage on it", async () => {
+  const { deps, fetch } = app([
+    JSON.stringify({
+      scores: [],
+      proposal: { name: "Manual note", description: "Typed in by hand", rationale: "first" },
+    }),
+  ]);
+
+  const response = await fetch(
+    new Request("http://localhost/api/tasks", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "Check the invoice", body: "Totals differ by 30" }),
+    }),
+  );
+
+  expect(response.status).toBe(201);
+  const body = (await response.json()) as { task: { sourceId: string; state: string; typeId: string } };
+  expect(body.task.sourceId).toBe("manual");
+  expect(body.task.state).toBe("needs_onboarding");
+  expect(body.task.typeId).not.toBeNull();
+});
+
+test("POST /api/tasks rejects a missing title and a duplicate external id", async () => {
+  const { deps, fetch } = app([]);
+  insertTask(deps.db, { sourceId: "manual", externalId: "dupe", title: "One", body: "b" });
+
+  const noTitle = await fetch(
+    new Request("http://localhost/api/tasks", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ body: "no title here" }),
+    }),
+  );
+  expect(noTitle.status).toBe(400);
+
+  const duplicate = await fetch(
+    new Request("http://localhost/api/tasks", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "Again", externalId: "dupe" }),
+    }),
+  );
+  expect(duplicate.status).toBe(409);
+});
+
 test("GET /api/tasks returns tasks", async () => {
   const { deps, fetch } = app();
   insertTask(deps.db, { sourceId: "outlook", externalId: "m1", title: "One", body: "b" });

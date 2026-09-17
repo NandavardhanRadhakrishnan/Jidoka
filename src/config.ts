@@ -17,6 +17,8 @@ export interface Config {
     clientId?: string;
     tenant: string;
   };
+  /** Folder polled by the sample source; unset disables it. */
+  sampleDir?: string;
   mcpServers: McpServerConfig[];
 }
 
@@ -35,6 +37,7 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
       clientId: env.JIDOKA_OUTLOOK_CLIENT_ID,
       tenant: env.JIDOKA_OUTLOOK_TENANT ?? "common",
     },
+    sampleDir: env.JIDOKA_SAMPLE_DIR,
     mcpServers: env.JIDOKA_MCP_SERVERS
       ? (JSON.parse(env.JIDOKA_MCP_SERVERS) as McpServerConfig[])
       : [],
