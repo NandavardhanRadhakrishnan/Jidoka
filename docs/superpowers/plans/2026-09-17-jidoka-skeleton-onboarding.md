@@ -4713,11 +4713,9 @@ if (import.meta.main) {
       console.warn("JIDOKA_OUTLOOK_CLIENT_ID is not set — no sources are polling");
     }
 
-    Bun.serve({
-      port: config.port,
-      routes: { "/*": index },
-      fetch: (request) => app.fetch(request),
-    });
+    // "/api/*" must be more specific than "/*", or the HTML page swallows every
+    // API call. Export the map as createRoutes(app) so a test can exercise it.
+    Bun.serve({ port: config.port, routes: createRoutes(app) });
     console.log(`Jidoka on http://localhost:${config.port}`);
   }
 }

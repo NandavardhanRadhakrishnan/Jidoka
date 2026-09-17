@@ -1,0 +1,119 @@
+import index from "./client/index.html";
+import { loadConfig, type Config } from "./config";
+import { openDb, migrate } from "./db";
+import { createProvider } from "./ai";
+import { McpManager } from "./mcp/manager";
+import { createServer } from "./api/server";
+import { onTaskIngested, type AppDeps } from "./orchestrator";
+import { startPoller } from "./sources/poller";
+import { createOutlookSource } from "./sources/outlook/source";
+import {
+  AuthPendingError,
+  completeDeviceLogin,
+  startDeviceLogin,
+} from "./sources/outlook/auth";
+
+export interface App {
+  deps: AppDeps;
+  mcp: McpManager;
+  fetch(request: Request): Promise<Response>;
+  close(): Promise<void>;
+}
+
+export function createApp(config: Config): App {
+  const db = openDb(config.dbPath);
+  migrate(db);
+
+  const mcp = new McpManager();
+  const deps: AppDeps = {
+    db,
+    provider: createProvider(config),
+    mcp: {
+      listTools: () => mcp.listTools(),
+      callTool: (server, tool, input) => mcp.callTool(server, tool, input),
+    },
+  };
+
+  const api = createServer(deps);
+
+  return {
+    deps,
+    mcp,
+    fetch: async (request) => api.fetch(request),
+    async close() {
+      await mcp.close();
+      db.close();
+    },
+  };
+}
+
+/**
+ * Route map for Bun.serve. "/api/*" must stay more specific than "/*", or the
+ * HTML page swallows every API call.
+ */
+export function createRoutes(app: App) {
+  return {
+    "/api/*": (request: Request) => app.fetch(request),
+    "/*": index,
+  };
+}
+
+async function loginOutlook(config: Config): Promise<void> {
+  const db = openDb(config.dbPath);
+  migrate(db);
+  if (!config.outlook.clientId) throw new Error("JIDOKA_OUTLOOK_CLIENT_ID is not set");
+
+  const deps = { db, clientId: config.outlook.clientId, tenant: config.outlook.tenant };
+  const login = await startDeviceLogin(deps);
+  console.log(`\nOpen ${login.verificationUri} and enter code: ${login.userCode}\n`);
+
+  const deadline = Date.now() + login.expiresIn * 1000;
+  while (Date.now() < deadline) {
+    await Bun.sleep(login.interval * 1000);
+    try {
+      await completeDeviceLogin(deps, login.deviceCode);
+      console.log("Outlook connected.");
+      db.close();
+      return;
+    } catch (error) {
+      if (!(error instanceof AuthPendingError)) throw error;
+    }
+  }
+  throw new Error("device login timed out");
+}
+
+if (import.meta.main) {
+  const config = loadConfig();
+
+  if (Bun.argv[2] === "login-outlook") {
+    await loginOutlook(config);
+  } else {
+    const app = createApp(config);
+    await app.mcp.connectAll(config.mcpServers);
+
+    if (config.outlook.clientId) {
+      const source = createOutlookSource({
+        db: app.deps.db,
+        clientId: config.outlook.clientId,
+        tenant: config.outlook.tenant,
+      });
+      startPoller(
+        app.deps.db,
+        [source],
+        async (task) => {
+          try {
+            await onTaskIngested(app.deps, task);
+          } catch (error) {
+            console.error(`[orchestrator] task ${task.id} failed:`, error);
+          }
+        },
+        config.pollIntervalMs,
+      );
+    } else {
+      console.warn("JIDOKA_OUTLOOK_CLIENT_ID is not set — no sources are polling");
+    }
+
+    Bun.serve({ port: config.port, routes: createRoutes(app) });
+    console.log(`Jidoka on http://localhost:${config.port}`);
+  }
+}
