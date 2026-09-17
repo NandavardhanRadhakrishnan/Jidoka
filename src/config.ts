@@ -1,0 +1,42 @@
+export interface McpServerConfig {
+  name: string;
+  command: string;
+  args: string[];
+}
+
+export interface Config {
+  dbPath: string;
+  port: number;
+  pollIntervalMs: number;
+  ai: {
+    provider: "anthropic" | "openai";
+    apiKey?: string;
+    model?: string;
+  };
+  outlook: {
+    clientId?: string;
+    tenant: string;
+  };
+  mcpServers: McpServerConfig[];
+}
+
+export function loadConfig(env: Record<string, string | undefined> = Bun.env): Config {
+  const provider = env.JIDOKA_AI_PROVIDER === "openai" ? "openai" : "anthropic";
+  return {
+    dbPath: env.JIDOKA_DB ?? "./jidoka.db",
+    port: Number(env.JIDOKA_PORT ?? 3000),
+    pollIntervalMs: Number(env.JIDOKA_POLL_INTERVAL_MS ?? 60_000),
+    ai: {
+      provider,
+      apiKey: provider === "openai" ? env.OPENAI_API_KEY : env.ANTHROPIC_API_KEY,
+      model: env.JIDOKA_AI_MODEL,
+    },
+    outlook: {
+      clientId: env.JIDOKA_OUTLOOK_CLIENT_ID,
+      tenant: env.JIDOKA_OUTLOOK_TENANT ?? "common",
+    },
+    mcpServers: env.JIDOKA_MCP_SERVERS
+      ? (JSON.parse(env.JIDOKA_MCP_SERVERS) as McpServerConfig[])
+      : [],
+  };
+}
