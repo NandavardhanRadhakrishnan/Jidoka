@@ -3888,7 +3888,8 @@ function app(replies: string[] = []): { deps: AppDeps; fetch: (req: Request) => 
   };
   const deps: AppDeps = { db, provider, mcp: { listTools: () => [], callTool: async () => "" } };
   const server = createServer(deps);
-  return { deps, fetch: (req) => server.fetch(req) };
+  // `async` collapses Hono's `Response | Promise<Response>` return type.
+  return { deps, fetch: async (req) => server.fetch(req) };
 }
 
 test("GET /api/tasks returns tasks", async () => {
