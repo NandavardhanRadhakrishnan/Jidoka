@@ -8,6 +8,7 @@ import {
   activatePipeline,
   listPipelines,
 } from "../../src/repo/pipelines";
+import { PipelineDefinitionSchema } from "../../src/domain/pipeline";
 
 function freshDb() {
   const db = openDb(":memory:");
@@ -15,7 +16,9 @@ function freshDb() {
   return db;
 }
 
-const definition = { steps: [{ id: "s1", type: "assign", to: "human" }] };
+const definition = PipelineDefinitionSchema.parse({
+  steps: [{ id: "s1", type: "assign", to: "human" }],
+});
 
 test("insertPipeline starts as a draft at version 1", () => {
   const db = freshDb();

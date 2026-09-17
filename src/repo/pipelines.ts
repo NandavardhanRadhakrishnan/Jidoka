@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { NewPipeline, Pipeline } from "../domain/pipeline";
+import { PipelineDefinitionSchema } from "../domain/pipeline";
 
 interface Row {
   id: string;
@@ -16,7 +17,7 @@ function toPipeline(row: Row): Pipeline {
     typeId: row.type_id,
     version: row.version,
     status: row.status as Pipeline["status"],
-    definition: JSON.parse(row.definition) as unknown,
+    definition: PipelineDefinitionSchema.parse(JSON.parse(row.definition)),
     createdAt: row.created_at,
   };
 }

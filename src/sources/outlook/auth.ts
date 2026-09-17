@@ -1,5 +1,14 @@
 import type { Database } from "bun:sqlite";
 
+/**
+ * The slice of `fetch` this source needs. Narrower than `typeof fetch` so tests
+ * can pass a plain async function without implementing runtime-specific extras.
+ */
+export type HttpFetch = (
+  input: string | URL | Request,
+  init?: RequestInit,
+) => Promise<Response>;
+
 export const OUTLOOK_SCOPES = ["offline_access", "Mail.Read"];
 const PROVIDER = "outlook";
 
@@ -13,7 +22,7 @@ export interface OutlookDeps {
   db: Database;
   clientId: string;
   tenant: string;
-  fetch?: typeof fetch;
+  fetch?: HttpFetch;
   now?: () => number;
 }
 
@@ -31,7 +40,7 @@ export class AuthPendingError extends Error {
   }
 }
 
-function http(deps: OutlookDeps): typeof fetch {
+function http(deps: OutlookDeps): HttpFetch {
   return deps.fetch ?? fetch;
 }
 
