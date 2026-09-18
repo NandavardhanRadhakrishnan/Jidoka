@@ -1,7 +1,7 @@
 import index from "./client/index.html";
 import { loadConfig, type Config } from "./config";
 import { openDb, migrate } from "./db";
-import { createProvider } from "./ai";
+import { createProvider, describeCredentials } from "./ai";
 import { McpManager } from "./mcp/manager";
 import { createServer } from "./api/server";
 import { onTaskIngested, type AppDeps } from "./orchestrator";
@@ -91,6 +91,10 @@ if (import.meta.main) {
     await loginOutlook(config);
   } else {
     const app = createApp(config);
+    console.log(
+      `AI provider: ${config.ai.provider} (${config.ai.model ?? "default model"}), ` +
+        `credentials: ${describeCredentials(config)}`,
+    );
     await app.mcp.connectAll(config.mcpServers);
 
     const sources: TaskSource[] = [];

@@ -3,11 +3,21 @@ import type { AiProvider, AiResult, CompleteRequest } from "./provider";
 
 export interface AnthropicOptions {
   apiKey?: string;
+  /** OAuth bearer token (ANTHROPIC_AUTH_TOKEN), e.g. from `ant auth login`. */
+  authToken?: string;
+  /** Point at a gateway or proxy instead of api.anthropic.com. */
+  baseUrl?: string;
   model?: string;
 }
 
 export function createAnthropicProvider(options: AnthropicOptions = {}): AiProvider {
-  const client = options.apiKey ? new Anthropic({ apiKey: options.apiKey }) : new Anthropic();
+  // With neither credential set, the SDK resolves them itself: ANTHROPIC_API_KEY,
+  // then ANTHROPIC_AUTH_TOKEN, then an `ant auth login` profile on disk.
+  const client = new Anthropic({
+    ...(options.apiKey ? { apiKey: options.apiKey } : {}),
+    ...(options.authToken ? { authToken: options.authToken } : {}),
+    ...(options.baseUrl ? { baseURL: options.baseUrl } : {}),
+  });
   const model = options.model ?? "claude-opus-5";
 
   return {

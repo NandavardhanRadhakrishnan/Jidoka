@@ -29,6 +29,24 @@ bun src/main.ts login-outlook              # one-time device-code login
 bun run dev
 ```
 
+## Model credentials
+
+Three ways to authenticate, checked in this order:
+
+1. **API key** — `ANTHROPIC_API_KEY` (or `OPENAI_API_KEY` with `JIDOKA_AI_PROVIDER=openai`).
+2. **OAuth bearer token** — `ANTHROPIC_AUTH_TOKEN`.
+3. **Nothing set** — the Anthropic SDK resolves credentials itself, including a
+   profile stored on disk by `ant auth login`.
+
+The startup log says which one is in use. `JIDOKA_AI_BASE_URL` points the client at
+a gateway or proxy instead of the provider's endpoint.
+
+> **Signing in with a Claude subscription:** the token path above is the mechanism
+> a subscription-based login would use, but a claude.ai Pro/Max subscription is
+> billed for Anthropic's own apps, not for arbitrary third-party API traffic —
+> check Anthropic's current terms before relying on it. Jidoka does not implement
+> a browser sign-in flow of its own; it reads whatever credential you supply.
+
 ## Feeding it tasks
 
 - **Sample folder** — drop a `.json`, `.txt` or `.md` file into `JIDOKA_SAMPLE_DIR`; see `samples/README.md`.
@@ -49,6 +67,8 @@ into Postman (it passes ids between requests for you).
 | `JIDOKA_POLL_INTERVAL_MS` | `60000` | How often sources are polled |
 | `JIDOKA_AI_PROVIDER` | `anthropic` | `anthropic` or `openai` |
 | `JIDOKA_AI_MODEL` | `claude-opus-5` | Model id for the chosen provider |
+| `ANTHROPIC_AUTH_TOKEN` | — | OAuth bearer token, used when no API key is set |
+| `JIDOKA_AI_BASE_URL` | — | Gateway or proxy instead of the provider's own endpoint |
 | `JIDOKA_OUTLOOK_CLIENT_ID` | — | Azure app registration (public client, `Mail.Read`) |
 | `JIDOKA_OUTLOOK_TENANT` | `common` | Azure tenant |
 | `JIDOKA_SAMPLE_DIR` | — | Folder polled by the sample source (e.g. `./samples`) |

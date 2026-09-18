@@ -11,6 +11,10 @@ export interface Config {
   ai: {
     provider: "anthropic" | "openai";
     apiKey?: string;
+    /** OAuth bearer token, used when no API key is set. */
+    authToken?: string;
+    /** Gateway or proxy base URL. */
+    baseUrl?: string;
     model?: string;
   };
   outlook: {
@@ -31,6 +35,8 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
     ai: {
       provider,
       apiKey: provider === "openai" ? env.OPENAI_API_KEY : env.ANTHROPIC_API_KEY,
+      authToken: provider === "openai" ? undefined : env.ANTHROPIC_AUTH_TOKEN,
+      baseUrl: env.JIDOKA_AI_BASE_URL ?? (provider === "openai" ? undefined : env.ANTHROPIC_BASE_URL),
       model: env.JIDOKA_AI_MODEL,
     },
     outlook: {
