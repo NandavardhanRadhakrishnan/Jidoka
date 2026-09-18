@@ -67,6 +67,29 @@ test("POST /api/tasks rejects a missing title and a duplicate external id", asyn
   expect(duplicate.status).toBe(409);
 });
 
+test("a malformed JSON body is a 400, not a crash", async () => {
+  const { deps, fetch } = app([]);
+  const type = insertTaskType(deps.db, { name: "Email query", description: "d" });
+
+  const inject = await fetch(
+    new Request("http://localhost/api/tasks", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "not json at all",
+    }),
+  );
+  expect(inject.status).toBe(400);
+
+  const onboard = await fetch(
+    new Request(`http://localhost/api/types/${type.id}/onboard`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{oops",
+    }),
+  );
+  expect(onboard.status).toBe(400);
+});
+
 test("GET /api/tasks returns tasks", async () => {
   const { deps, fetch } = app();
   insertTask(deps.db, { sourceId: "outlook", externalId: "m1", title: "One", body: "b" });

@@ -1,0 +1,300 @@
+{
+  "info": {
+    "name": "Jidoka",
+    "description": "Try Jidoka end to end: inject a task, watch AI triage discover a task type, onboard that type by describing how it should be handled, activate the generated pipeline, and see the waiting task get processed.\n\nStart the server first:\n\n    export ANTHROPIC_API_KEY=sk-ant-...\n    export JIDOKA_SAMPLE_DIR=./samples\n    bun run dev\n\nRun the requests in order. Each one stores the ids the next request needs in collection variables (taskId, typeId, pipelineId), so you can just keep clicking Send.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3000", "type": "string" },
+    { "key": "taskId", "value": "", "type": "string" },
+    { "key": "typeId", "value": "", "type": "string" },
+    { "key": "otherTypeId", "value": "", "type": "string" },
+    { "key": "pipelineId", "value": "", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "1 · Inject and triage",
+      "item": [
+        {
+          "name": "Inject a task (runs triage)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.task) {",
+                  "  pm.collectionVariables.set('taskId', body.task.id);",
+                  "  if (body.task.typeId) pm.collectionVariables.set('typeId', body.task.typeId);",
+                  "  console.log('task', body.task.id, 'state', body.task.state, 'type', body.task.typeId);",
+                  "}",
+                  "pm.test('task was stored', () => pm.expect(body.task).to.be.an('object'));",
+                  "pm.test('triage ran (201) — 502 means the model call failed', () =>",
+                  "  pm.expect(pm.response.code).to.eql(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "content-type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/api/tasks", "host": ["{{baseUrl}}"], "path": ["api", "tasks"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Where is my order?\",\n  \"body\": \"I placed order 4821 last Tuesday and the tracking link still says label created. Can you check what happened?\",\n  \"metadata\": { \"from\": \"customer@example.com\" }\n}"
+            },
+            "description": "Stores the task and immediately runs AI triage on it.\n\nResponses:\n- 201 with the triaged task\n- 400 if title is missing\n- 409 if sourceId + externalId already exist\n- 502 if the model call failed (the task is still stored, and the body carries both `task` and `error`)\n\nThe first task in an empty system has no type to match, so triage proposes a new type and the task lands in `needs_onboarding`."
+          }
+        },
+        {
+          "name": "Inject a second, different task",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.task) console.log('state', body.task.state, 'candidates', body.task.typeCandidates);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "content-type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/api/tasks", "host": ["{{baseUrl}}"], "path": ["api", "tasks"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Invoice 42 does not match the PO\",\n  \"body\": \"Finance flagged that invoice 42 is 30.00 higher than PO-1180. The supplier says the difference is a freight surcharge. Confirm before Friday's payment run.\",\n  \"metadata\": { \"from\": \"finance@example.com\" }\n}"
+            },
+            "description": "A task of a clearly different kind. Triage either proposes a second type, matches the first one, or — if it finds both plausible — parks the task in `needs_type_confirmation` with `typeCandidates` filled in."
+          }
+        },
+        {
+          "name": "List tasks (the board)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const { tasks } = pm.response.json();",
+                  "console.log(tasks.map((t) => `${t.state.padEnd(24)} ${t.title}`).join('\\n'));",
+                  "const waiting = tasks.find((t) => t.state === 'needs_type_confirmation');",
+                  "if (waiting) pm.collectionVariables.set('taskId', waiting.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/tasks", "host": ["{{baseUrl}}"], "path": ["api", "tasks"] },
+            "description": "Every task, newest first. This is exactly what the kanban board renders.\n\nStates: ingested, needs_type_confirmation, needs_onboarding, processing, assigned_ai, assigned_human, done, failed.\n\nIf any task is waiting on a type answer, its id is stored in {{taskId}} for the next folder."
+          }
+        }
+      ]
+    },
+    {
+      "name": "2 · Task types",
+      "item": [
+        {
+          "name": "List types",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const { types } = pm.response.json();",
+                  "if (types[0]) pm.collectionVariables.set('typeId', types[0].id);",
+                  "if (types[1]) pm.collectionVariables.set('otherTypeId', types[1].id);",
+                  "console.log(types.map((t) => `${t.status} ${t.name} — pipeline ${t.activePipelineId ?? 'none'}`).join('\\n'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/types", "host": ["{{baseUrl}}"], "path": ["api", "types"] },
+            "description": "The type registry that triage classifies against. Each type carries its name, description, example tasks, status (proposed / active), its active pipeline id, and every pipeline version built for it.\n\nStores the first type in {{typeId}} and the second in {{otherTypeId}}."
+          }
+        },
+        {
+          "name": "Answer an ambiguous triage",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "content-type", "value": "application/json" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/tasks/{{taskId}}/type",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "tasks", "{{taskId}}", "type"]
+            },
+            "body": { "mode": "raw", "raw": "{\n  \"typeId\": \"{{typeId}}\"\n}" },
+            "description": "Use this for a task sitting in `needs_type_confirmation`. The task's title is saved as an example on the chosen type, so triage classifies better next time, and the task continues: it runs the type's pipeline, or waits for onboarding if there isn't one."
+          }
+        },
+        {
+          "name": "Rename / re-describe a type",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "content-type", "value": "application/json" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/types/{{typeId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "types", "{{typeId}}"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Customer order query\",\n  \"description\": \"An external customer asking about the status of an order they placed\"\n}"
+            },
+            "description": "The description is what triage reads, so editing it changes how future tasks are classified."
+          }
+        },
+        {
+          "name": "Merge a duplicate type",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "content-type", "value": "application/json" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/types/{{otherTypeId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "types", "{{otherTypeId}}"]
+            },
+            "body": { "mode": "raw", "raw": "{\n  \"mergeInto\": \"{{typeId}}\"\n}" },
+            "description": "Folds {{otherTypeId}} into {{typeId}}: its tasks are repointed and the duplicate type is deleted. Returns { \"merged\": true }.\n\nSkip this request unless triage actually produced two near-duplicate types."
+          }
+        }
+      ]
+    },
+    {
+      "name": "3 · Onboarding a type",
+      "item": [
+        {
+          "name": "Build a pipeline from a description",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.pipeline) {",
+                  "  pm.collectionVariables.set('pipelineId', body.pipeline.id);",
+                  "  console.log(JSON.stringify(body.pipeline.definition, null, 2));",
+                  "}",
+                  "pm.test('a draft pipeline was built', () => pm.expect(pm.response.code).to.eql(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "content-type", "value": "application/json" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/types/{{typeId}}/onboard",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "types", "{{typeId}}", "onboard"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"description\": \"Summarize what the customer is asking in two sentences. Then decide whether this is a simple status question or a complaint: label it 'status' or 'complaint'. Status questions go to AI, complaints go to a human with the summary attached.\"\n}"
+            },
+            "description": "An AI agent turns your plain-language description into a pipeline definition and saves it as a DRAFT (nothing runs yet). The response body contains the full definition — read it before activating.\n\nSteps it can emit: `ai` (one prompt), `agent` (loops over MCP tools until done), `mcp_tool` (one known call), `branch` (on an earlier step's output), `assign` (ai or human), `call_pipeline`.\n\nIt refuses definitions that use tools you don't have or that can end without assigning the task. 502 means the model failed twice.\n\nNote: `agent` and `mcp_tool` steps only appear if MCP servers are configured via JIDOKA_MCP_SERVERS."
+          }
+        },
+        {
+          "name": "Review the draft pipeline",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/pipelines/{{pipelineId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "pipelines", "{{pipelineId}}"]
+            },
+            "description": "The stored definition, version and status (draft / active / superseded)."
+          }
+        },
+        {
+          "name": "Activate it (processes waiting tasks)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "pm.test('pipeline is active', () => pm.expect(body.pipeline.status).to.eql('active'));",
+                  "console.log('now fetch GET /api/tasks — tasks of this type have been processed');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/api/pipelines/{{pipelineId}}/activate",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "pipelines", "{{pipelineId}}", "activate"]
+            },
+            "description": "Publishes the draft, marks the type active, and immediately runs it over every task of that type still sitting in `needs_onboarding`. Any previously active version becomes `superseded`.\n\nAfter this, GET /api/tasks shows those tasks in assigned_ai / assigned_human, with the pipeline's output in `context` and its step log in `context.pipelineLog`."
+          }
+        },
+        {
+          "name": "Skip onboarding for a task",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/api/tasks/{{taskId}}/skip-onboarding",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "tasks", "{{taskId}}", "skip-onboarding"]
+            },
+            "description": "The escape hatch: hand this task to a human as-is, without building a pipeline. The type stays `proposed`, so you can onboard it later."
+          }
+        }
+      ]
+    },
+    {
+      "name": "4 · After a pipeline has run",
+      "item": [
+        {
+          "name": "Inject another task of the same kind",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.task) {",
+                  "  console.log('state', body.task.state, 'assignee', body.task.assignee);",
+                  "  console.log('context', JSON.stringify(body.task.context, null, 2));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "content-type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/api/tasks", "host": ["{{baseUrl}}"], "path": ["api", "tasks"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Order 5190 still not delivered\",\n  \"body\": \"Two weeks now and no parcel. This is the second time this has happened and I would like a refund.\",\n  \"metadata\": { \"from\": \"another.customer@example.com\" }\n}"
+            },
+            "description": "The payoff: this one is triaged into the existing type and its pipeline runs end to end with no interaction. The response shows the final state, the assignee the pipeline chose, and everything the steps wrote into `context`."
+          }
+        },
+        {
+          "name": "List tasks again",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/tasks", "host": ["{{baseUrl}}"], "path": ["api", "tasks"] },
+            "description": "Confirm the board: processed tasks carry `assignee`, `context` (step outputs) and `context.pipelineLog` (which steps ran). A task in `failed` has `context.error`."
+          }
+        }
+      ]
+    }
+  ]
+}

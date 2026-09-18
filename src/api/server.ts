@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { findTaskBySource, getTask, insertTask, listTasks } from "../repo/tasks";
 import { getTaskType, listTaskTypes, mergeTaskType, updateTaskType } from "../repo/taskTypes";
 import { getActivePipeline, getPipeline, listPipelines } from "../repo/pipelines";
@@ -11,6 +11,15 @@ import {
   type AppDeps,
 } from "../orchestrator";
 
+/** Parsed body, or null when the client sent something that is not JSON. */
+async function readJson<T>(c: Context): Promise<T | null> {
+  try {
+    return (await c.req.json()) as T;
+  } catch {
+    return null;
+  }
+}
+
 export function createServer(deps: AppDeps): Hono {
   const app = new Hono();
 
@@ -19,15 +28,16 @@ export function createServer(deps: AppDeps): Hono {
   // Inject a task by hand: the quickest way to exercise triage and pipelines
   // without waiting for a real source to poll.
   app.post("/api/tasks", async (c) => {
-    const input = (await c.req.json()) as {
+    const input = await readJson<{
       title?: string;
       body?: string;
       url?: string;
       sourceId?: string;
       externalId?: string;
       metadata?: Record<string, unknown>;
-    };
+    }>(c);
 
+    if (!input) return c.json({ error: "body must be valid JSON" }, 400);
     if (!input.title?.trim()) return c.json({ error: "title is required" }, 400);
 
     const sourceId = input.sourceId?.trim() || "manual";
@@ -78,7 +88,9 @@ export function createServer(deps: AppDeps): Hono {
   app.post("/api/tasks/:id/type", async (c) => {
     const id = c.req.param("id");
     if (!getTask(deps.db, id)) return c.json({ error: "unknown task" }, 404);
-    const { typeId } = (await c.req.json()) as { typeId: string };
+    const input = await readJson<{ typeId?: string }>(c);
+    if (!input?.typeId) return c.json({ error: "typeId is required" }, 400);
+    const typeId = input.typeId;
     if (!getTaskType(deps.db, typeId)) return c.json({ error: "unknown type" }, 404);
     return c.json({ task: await confirmTaskType(deps, id, typeId) });
   });
@@ -92,11 +104,12 @@ export function createServer(deps: AppDeps): Hono {
   app.patch("/api/types/:id", async (c) => {
     const id = c.req.param("id");
     if (!getTaskType(deps.db, id)) return c.json({ error: "unknown type" }, 404);
-    const patch = (await c.req.json()) as {
+    const patch = await readJson<{
       name?: string;
       description?: string;
       mergeInto?: string;
-    };
+    }>(c);
+    if (!patch) return c.json({ error: "body must be valid JSON" }, 400);
     if (patch.mergeInto) {
       if (!getTaskType(deps.db, patch.mergeInto)) return c.json({ error: "unknown target" }, 404);
       mergeTaskType(deps.db, id, patch.mergeInto);
@@ -108,7 +121,9 @@ export function createServer(deps: AppDeps): Hono {
   app.post("/api/types/:id/onboard", async (c) => {
     const id = c.req.param("id");
     if (!getTaskType(deps.db, id)) return c.json({ error: "unknown type" }, 404);
-    const { description } = (await c.req.json()) as { description: string };
+    const input = await readJson<{ description?: string }>(c);
+    if (!input?.description?.trim()) return c.json({ error: "description is required" }, 400);
+    const description = input.description;
     try {
       return c.json({ pipeline: await onboardType(deps, id, description) });
     } catch (error) {

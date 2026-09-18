@@ -35,6 +35,11 @@ bun run dev
 - **By hand** — the board's **New task** button, or `POST /api/tasks` with `{ "title": ..., "body": ... }`.
 - **Outlook** — polled on the interval once you have logged in.
 
+To drive the whole flow by hand — inject, triage, onboard, activate — see
+[`docs/try-it.md`](docs/try-it.md) for curls, or import
+[`docs/postman/jidoka.postman_collection.json`](docs/postman/jidoka.postman_collection.json)
+into Postman (it passes ids between requests for you).
+
 ## Configuration
 
 | Variable | Default | Meaning |
