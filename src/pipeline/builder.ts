@@ -17,12 +17,20 @@ Step shapes:
 - { "id": "s1b", "type": "agent", "prompt": "<what to find out and what to produce>", "tools": ["<server>__<tool>", ...], "maxIterations": 6, "output": "<context key>" }
 - { "id": "s2", "type": "mcp_tool", "server": "<server>", "tool": "<tool>", "input": { ... }, "output": "<context key>" }
 - { "id": "s3", "type": "branch", "on": "<context key>", "cases": { "<value>": [ ...steps ] }, "default": [ ...steps ] }
-- { "id": "s4", "type": "assign", "to": "ai" | "human", "note": "<optional note>" }
+- { "id": "s4", "type": "assign", "to": "ai" | "human", "note": "<optional note>", "open": [ ...handoff targets ] }
+
+Handoff targets (only on an assign to "human") are what the person should have in
+front of them when they pick the task up:
+- { "kind": "url", "label": "The email", "url": "{{task.url}}" }
+- { "kind": "draft", "label": "Suggested reply", "content": "{{context.reply}}" }
+- { "kind": "session", "label": "Review conversation", "sessionId": "{{context.<agent step output>_session}}" }
+- { "kind": "command", "label": "Check out the PR", "command": "gh pr checkout 123" }
 
 Rules:
 - Use an "ai" step for a single self-contained judgement (summarize, classify, draft) over what the task already contains.
 - Use an "agent" step when gathering context needs an unknown number of lookups — "read the related mails", "find the matching order" — and list exactly the tools it may use.
 - Use an "mcp_tool" step when the exact call is known in advance.
+- When assigning to a human, add handoff targets so they do not have to go hunting: the source item's URL when the task has one, any draft the pipeline produced, and a session target for an agent step whose conversation is worth resuming (its id is at "<that step's output>_session").
 - Step ids are unique within the pipeline.
 - Every pipeline ends on an assign step in every branch — a task must never finish unassigned.
 - Only use mcp_tool steps for tools listed as available; use the exact server and tool names given.

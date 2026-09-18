@@ -2,6 +2,11 @@ import type { Task } from "../domain/task";
 import type { TaskType } from "../domain/taskType";
 import type { Pipeline } from "../domain/pipeline";
 
+export type HandoffTarget =
+  | { kind: "url"; label: string; url: string }
+  | { kind: "draft"; label: string; content: string }
+  | { kind: "command"; label: string; command: string };
+
 export interface AuthProviderStatus {
   id: string;
   connected: boolean;
@@ -43,6 +48,16 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ typeId }),
     }).then((r) => r.task),
+  pickUp: (taskId: string) =>
+    json<{ task: Task; handoff: HandoffTarget[]; canLaunchTerminal: boolean }>(
+      `/api/tasks/${taskId}/pick-up`,
+      { method: "POST" },
+    ),
+  runCommand: (taskId: string, label: string) =>
+    json<{ launched: string }>(`/api/tasks/${taskId}/run-command`, {
+      method: "POST",
+      body: JSON.stringify({ label }),
+    }),
   completeTask: (taskId: string, note?: string) =>
     json<{ task: Task }>(`/api/tasks/${taskId}/complete`, {
       method: "POST",

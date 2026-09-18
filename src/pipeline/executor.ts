@@ -1,6 +1,6 @@
 import type { AiProvider, ToolSpec } from "../ai/provider";
 import type { Assignee, Task } from "../domain/task";
-import type { PipelineDefinition, PipelineStep } from "../domain/pipeline";
+import type { HandoffTarget, PipelineDefinition, PipelineStep } from "../domain/pipeline";
 import { createInProcessRunner, type AgentRunner } from "../agent/runner";
 import { renderInput, renderTemplate, type TemplateScope } from "./template";
 
@@ -38,6 +38,54 @@ export interface RunResult {
   context: Record<string, unknown>;
   assignee: Assignee | null;
   log: StepLogEntry[];
+  /** What a human should have open when they pick this task up. */
+  handoff?: ResolvedHandoffTarget[];
+}
+
+/** A handoff target with its templates filled in. */
+export type ResolvedHandoffTarget =
+  | { kind: "url"; label: string; url: string }
+  | { kind: "draft"; label: string; content: string }
+  | { kind: "command"; label: string; command: string };
+
+/**
+ * Renders handoff targets. A `session` target becomes the command that resumes
+ * that conversation; a target whose value did not resolve is dropped rather than
+ * handed to someone as an empty link.
+ */
+export function resolveHandoff(
+  targets: HandoffTarget[],
+  scope: TemplateScope,
+  resumeCommand = (sessionId: string) => `claude --resume ${sessionId}`,
+): ResolvedHandoffTarget[] {
+  const resolved: ResolvedHandoffTarget[] = [];
+
+  for (const target of targets) {
+    const label = renderTemplate(target.label, scope);
+
+    if (target.kind === "session") {
+      const sessionId = renderTemplate(target.sessionId, scope).trim();
+      if (sessionId) resolved.push({ kind: "command", label, command: resumeCommand(sessionId) });
+      continue;
+    }
+
+    if (target.kind === "url") {
+      const url = renderTemplate(target.url, scope).trim();
+      if (url) resolved.push({ kind: "url", label, url });
+      continue;
+    }
+
+    if (target.kind === "draft") {
+      const content = renderTemplate(target.content, scope);
+      if (content.trim()) resolved.push({ kind: "draft", label, content });
+      continue;
+    }
+
+    const command = renderTemplate(target.command, scope).trim();
+    if (command) resolved.push({ kind: "command", label, command });
+  }
+
+  return resolved;
 }
 
 const MAX_DEPTH = 5;
@@ -47,6 +95,7 @@ interface RunState {
   assignee: Assignee | null;
   log: StepLogEntry[];
   stack: string[];
+  handoff?: ResolvedHandoffTarget[];
 }
 
 function scopeFor(task: Task, state: RunState): TemplateScope {
@@ -113,6 +162,8 @@ async function runSteps(
         }
 
         state.context[step.output] = result.text;
+        // Keep the conversation id so a handoff can offer to resume it.
+        if (result.sessionId) state.context[`${step.output}_session`] = result.sessionId;
         state.log.push({ stepId: step.id, type: step.type, output: step.output });
         break;
       }
@@ -126,6 +177,7 @@ async function runSteps(
       case "assign": {
         state.assignee = step.to;
         if (step.note) state.context[`note:${step.id}`] = renderTemplate(step.note, scope);
+        if (step.open?.length) state.handoff = resolveHandoff(step.open, scope);
         state.log.push({ stepId: step.id, type: step.type });
         break;
       }
@@ -171,5 +223,10 @@ export async function runPipeline(
 
   await runSteps(deps, definition.steps, task, state);
 
-  return { context: state.context, assignee: state.assignee, log: state.log };
+  return {
+    context: state.context,
+    assignee: state.assignee,
+    log: state.log,
+    ...(state.handoff ? { handoff: state.handoff } : {}),
+  };
 }

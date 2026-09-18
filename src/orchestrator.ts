@@ -92,7 +92,11 @@ export async function runPipelineForTask(
     );
 
     return updateTask(deps.db, task.id, {
-      context: { ...result.context, pipelineLog: result.log },
+      context: {
+        ...result.context,
+        pipelineLog: result.log,
+        ...(result.handoff ? { handoff: result.handoff } : {}),
+      },
       assignee: result.assignee,
       state: result.assignee === "ai" ? "assigned_ai" : "assigned_human",
     });

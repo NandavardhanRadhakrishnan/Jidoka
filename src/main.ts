@@ -5,6 +5,7 @@ import { createProvider, describeCredentials } from "./ai";
 import { McpManager } from "./mcp/manager";
 import { createServer } from "./api/server";
 import { createAuthRoutes, getValidAccessToken } from "./api/auth";
+import { createHandoffRoutes } from "./api/handoff";
 import { createInProcessRunner, type AgentRunner } from "./agent/runner";
 import { createAgentSdkRunner } from "./agent/claudeAgentSdk";
 import { withConcurrencyLimit } from "./agent/limit";
@@ -68,7 +69,16 @@ export function createApp(config: Config): App {
     },
   };
 
-  const api = createServer(deps, createAuthRoutes(authDeps));
+  const extraRoutes = createAuthRoutes(authDeps);
+  extraRoutes.route(
+    "/",
+    createHandoffRoutes({
+      db,
+      ...(config.terminalCommand ? { terminalCommand: config.terminalCommand } : {}),
+    }),
+  );
+
+  const api = createServer(deps, extraRoutes);
 
   return {
     deps,

@@ -30,6 +30,11 @@ export interface Config {
   };
   /** Folder polled by the sample source; unset disables it. */
   sampleDir?: string;
+  /**
+   * Launcher for handoff commands, with {{command}} substituted. Unset means
+   * commands can only be copied, never launched by the server.
+   */
+  terminalCommand?: string;
   agent: {
     /**
      * Who runs an `agent` step's tool loop. "in-process" uses the AiProvider and
@@ -71,6 +76,7 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
       tenant: env.JIDOKA_OUTLOOK_TENANT ?? "common",
     },
     sampleDir: env.JIDOKA_SAMPLE_DIR,
+    terminalCommand: env.JIDOKA_TERMINAL,
     agent: {
       // Model calls on the CLI imply agent steps on the CLI too, unless overridden.
       runner:

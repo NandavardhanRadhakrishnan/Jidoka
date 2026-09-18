@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { Task } from "../domain/task";
-import { api } from "./api";
+import { api, type HandoffTarget } from "./api";
+import { Handoff, openUrlTargets } from "./Handoff";
 
 interface StepLogEntry {
   stepId: string;
@@ -10,7 +11,14 @@ interface StepLogEntry {
 }
 
 /** Context keys the pipeline writes for its own bookkeeping, not for reading. */
-const INTERNAL_KEYS = new Set(["pipelineLog", "completedAt", "completionNote", "error"]);
+const INTERNAL_KEYS = new Set([
+  "pipelineLog",
+  "completedAt",
+  "completionNote",
+  "error",
+  "handoff",
+  "pickedUpAt",
+]);
 
 export function TaskDetail({
   task,
@@ -24,6 +32,26 @@ export function TaskDetail({
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [handoff, setHandoff] = useState<HandoffTarget[] | null>(
+    (task.context.handoff as HandoffTarget[] | undefined) ?? null,
+  );
+  const [canLaunchTerminal, setCanLaunchTerminal] = useState(false);
+
+  async function pickUp() {
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await api.pickUp(task.id);
+      setHandoff(result.handoff);
+      setCanLaunchTerminal(result.canLaunchTerminal);
+      openUrlTargets(result.handoff);
+      await onChanged();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   const log = (task.context.pipelineLog as StepLogEntry[] | undefined) ?? [];
   const outputs = Object.entries(task.context).filter(([key]) => !INTERNAL_KEYS.has(key));
@@ -59,6 +87,16 @@ export function TaskDetail({
       </p>
 
       {task.body && <pre className="body">{task.body}</pre>}
+
+      {task.state !== "done" && (handoff?.length ?? 0) >= 0 && (
+        <button disabled={busy} onClick={() => void pickUp()}>
+          {task.context.pickedUpAt ? "Open everything again" : "Pick up"}
+        </button>
+      )}
+
+      {handoff && (
+        <Handoff taskId={task.id} targets={handoff} canLaunchTerminal={canLaunchTerminal} />
+      )}
 
       {typeof task.context.error === "string" && (
         <p className="error">Pipeline failed: {task.context.error}</p>

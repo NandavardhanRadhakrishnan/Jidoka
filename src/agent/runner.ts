@@ -19,6 +19,12 @@ export interface AgentRunInput {
 export interface AgentRunResult {
   text: string;
   toolCalls: AgentToolCall[];
+  /**
+   * Set by backends that keep a resumable conversation (the Agent SDK does). A
+   * handoff can hand this to a human so they continue that session rather than
+   * starting cold.
+   */
+  sessionId?: string;
 }
 
 /**

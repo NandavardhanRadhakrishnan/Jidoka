@@ -27,11 +27,32 @@ const McpToolStep = z.object({
   output: z.string(),
 });
 
+/**
+ * What a human should have open when they pick the task up: the source item, a
+ * prepared draft, or a command that resumes the agent session the pipeline
+ * already ran. Every field is templated like the rest of a pipeline.
+ */
+export const HandoffTargetSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("url"), label: z.string(), url: z.string() }),
+  z.object({ kind: z.literal("draft"), label: z.string(), content: z.string() }),
+  z.object({ kind: z.literal("command"), label: z.string(), command: z.string() }),
+  z.object({
+    kind: z.literal("session"),
+    label: z.string(),
+    /** Context key holding the session id an agent step produced. */
+    sessionId: z.string(),
+  }),
+]);
+
+export type HandoffTarget = z.infer<typeof HandoffTargetSchema>;
+
 const AssignStep = z.object({
   id: z.string(),
   type: z.literal("assign"),
   to: z.enum(["ai", "human"]),
   note: z.string().optional(),
+  /** Handoff targets; only meaningful when assigning to a human. */
+  open: z.array(HandoffTargetSchema).optional(),
 });
 
 const CallPipelineStep = z.object({

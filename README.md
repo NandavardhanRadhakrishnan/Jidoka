@@ -40,6 +40,34 @@ bun src/main.ts login-outlook              # one-time device-code login
 bun run dev
 ```
 
+## Handoff: picking up a task
+
+When a pipeline assigns a task to a human, it can also say what that person should
+have in front of them. The `assign` step carries an `open` list:
+
+```json
+{ "id": "s4", "type": "assign", "to": "human",
+  "open": [
+    { "kind": "url",     "label": "The email",   "url": "{{task.url}}" },
+    { "kind": "draft",   "label": "Draft reply", "content": "{{context.reply}}" },
+    { "kind": "session", "label": "Review chat", "sessionId": "{{context.review_session}}" }
+  ] }
+```
+
+**Pick up** on the task opens the URLs in tabs, shows drafts to copy, and offers
+each command. A `session` target resolves to `claude --resume <id>` — the
+conversation an `agent` step already had, so a reviewer lands in a chat that has
+read the diff instead of starting cold. Agent steps publish their id at
+`<output>_session`.
+
+Set `JIDOKA_TERMINAL` to launch commands instead of just copying them, e.g.
+`wt.exe -- bash -lc "{{command}}"` or `cmd.exe /c start "" cmd /k {{command}}`.
+
+> Pipelines are written by a model from task content, so command text is untrusted.
+> The server only launches a command already stored on that task's own handoff,
+> matched by label, and only in a visible terminal; there is no endpoint that runs
+> an arbitrary string, and nothing runs without a click.
+
 ## Credentials and signing in
 
 Four ways to authenticate, checked in this order:
@@ -139,6 +167,7 @@ into Postman (it passes ids between requests for you).
 | `JIDOKA_OUTLOOK_CLIENT_ID` | — | Azure app registration (public client, `Mail.Read`) |
 | `JIDOKA_OUTLOOK_TENANT` | `common` | Azure tenant |
 | `JIDOKA_SAMPLE_DIR` | — | Folder polled by the sample source (e.g. `./samples`) |
+| `JIDOKA_TERMINAL` | — | Launcher for handoff commands, `{{command}}` substituted; unset means copy-only |
 | `JIDOKA_AGENT_RUNNER` | `in-process` | `in-process` (API key) or `agent-sdk` (Claude Code CLI, subscription) |
 | `JIDOKA_AGENT_CONCURRENCY` | `1` sdk / `4` in-process | Parallel agent runs |
 | `JIDOKA_AGENT_MODEL` | — | Model for agent runs |

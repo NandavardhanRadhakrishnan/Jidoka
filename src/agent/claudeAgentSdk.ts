@@ -40,6 +40,8 @@ interface SdkResultMessage {
   subtype: string;
   result?: string;
   is_error: boolean;
+  /** Resumable conversation id, handed to a human in a handoff. */
+  session_id?: string;
 }
 
 type CanUseToolResult = { behavior: "allow" } | { behavior: "deny"; message: string };
@@ -162,7 +164,11 @@ export function createAgentSdkRunner(options: AgentSdkRunnerOptions): AgentRunne
         );
       }
 
-      return { text: finalResult.result ?? text, toolCalls };
+      return {
+        text: finalResult.result ?? text,
+        toolCalls,
+        ...(finalResult.session_id ? { sessionId: finalResult.session_id } : {}),
+      };
     },
   };
 }
