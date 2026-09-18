@@ -1,4 +1,5 @@
 import type { Config } from "../config";
+import { createAgentSdkProvider } from "./agentSdkProvider";
 import { createAnthropicProvider } from "./anthropic";
 import { createOpenAiProvider } from "./openai";
 import type { AiProvider } from "./provider";
@@ -11,6 +12,13 @@ export interface ProviderOverrides {
 export function createProvider(config: Config, overrides: ProviderOverrides = {}): AiProvider {
   // An explicit key or token in the environment always wins over a stored one.
   const useStoredToken = !config.ai.apiKey && !config.ai.authToken ? overrides.getAuthToken : undefined;
+
+  if (config.ai.provider === "agent-sdk") {
+    return createAgentSdkProvider({
+      ...(config.ai.model ? { model: config.ai.model } : {}),
+      ...(config.agent.maxBudgetUsd ? { maxBudgetUsd: config.agent.maxBudgetUsd } : {}),
+    });
+  }
 
   return config.ai.provider === "openai"
     ? createOpenAiProvider({
@@ -29,6 +37,7 @@ export function createProvider(config: Config, overrides: ProviderOverrides = {}
 
 /** How the model calls will authenticate, for the startup log. */
 export function describeCredentials(config: Config): string {
+  if (config.ai.provider === "agent-sdk") return "Claude Code CLI login (no API key)";
   if (config.ai.apiKey) return "API key";
   if (config.ai.authToken) return "OAuth token (ANTHROPIC_AUTH_TOKEN)";
   if (config.oauth[config.ai.provider]) return "browser sign-in (/api/auth)";

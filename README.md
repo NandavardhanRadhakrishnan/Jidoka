@@ -11,14 +11,25 @@ the task lands on the **board**, assigned to AI or a human.
 
 ## Run it
 
-No credentials beyond a model key — tasks come from the `samples/` folder and the
-board's **New task** button:
+No API key needed: with `JIDOKA_AI_PROVIDER=agent-sdk`, every model call goes
+through the Claude Code CLI, so whatever that CLI is logged in as — a
+subscription included — covers triage, pipeline building and every step.
 
 ```bash
 bun install
-export ANTHROPIC_API_KEY=sk-ant-...        # or JIDOKA_AI_PROVIDER=openai + OPENAI_API_KEY
+claude                                     # once, to sign the CLI in
+export JIDOKA_AI_PROVIDER=agent-sdk
+export JIDOKA_AI_MODEL=sonnet              # optional
 export JIDOKA_SAMPLE_DIR=./samples
 bun run dev                                # http://localhost:3000
+```
+
+With an API key instead:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...        # or JIDOKA_AI_PROVIDER=openai + OPENAI_API_KEY
+export JIDOKA_SAMPLE_DIR=./samples
+bun run dev
 ```
 
 With Outlook:
@@ -64,9 +75,11 @@ Subscription runs share one personal account's limits, so keep them few:
 `JIDOKA_AGENT_CONCURRENCY` defaults to 1 for `agent-sdk` and 4 for `in-process`.
 `JIDOKA_AGENT_MODEL` and `JIDOKA_AGENT_MAX_BUDGET_USD` bound a run.
 
-Triage and pipeline building still go through the `AiProvider`, so they need an
-API key (or an OpenAI-compatible endpoint) even when agent steps run on a
-subscription.
+Setting `JIDOKA_AI_PROVIDER=agent-sdk` turns agent steps on the CLI too, and
+routes triage, the builder and `ai` steps through it as single-shot CLI calls —
+that is the no-API-key setup. Each such call costs a process spawn (~1s) plus a
+cache read of Claude Code's own system prompt, so it trades throughput for not
+needing a key.
 
 ### Browser sign-in
 
@@ -119,7 +132,7 @@ into Postman (it passes ids between requests for you).
 | `JIDOKA_DB` | `./jidoka.db` | SQLite file |
 | `JIDOKA_PORT` | `3000` | HTTP port |
 | `JIDOKA_POLL_INTERVAL_MS` | `60000` | How often sources are polled |
-| `JIDOKA_AI_PROVIDER` | `anthropic` | `anthropic` or `openai` |
+| `JIDOKA_AI_PROVIDER` | `anthropic` | `anthropic`, `openai`, or `agent-sdk` (Claude Code CLI, no key) |
 | `JIDOKA_AI_MODEL` | `claude-opus-5` | Model id for the chosen provider |
 | `ANTHROPIC_AUTH_TOKEN` | — | OAuth bearer token, used when no API key is set |
 | `JIDOKA_AI_BASE_URL` | — | Gateway or proxy instead of the provider's own endpoint |

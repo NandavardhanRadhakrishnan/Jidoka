@@ -12,7 +12,11 @@ export interface Config {
   port: number;
   pollIntervalMs: number;
   ai: {
-    provider: "anthropic" | "openai";
+    /**
+     * "agent-sdk" runs every model call through the Claude Code CLI, so the CLI's
+     * own login (a subscription included) covers them and no API key is needed.
+     */
+    provider: "anthropic" | "openai" | "agent-sdk";
     apiKey?: string;
     /** OAuth bearer token, used when no API key is set. */
     authToken?: string;
@@ -45,7 +49,12 @@ export interface Config {
 }
 
 export function loadConfig(env: Record<string, string | undefined> = Bun.env): Config {
-  const provider = env.JIDOKA_AI_PROVIDER === "openai" ? "openai" : "anthropic";
+  const provider =
+    env.JIDOKA_AI_PROVIDER === "openai"
+      ? "openai"
+      : env.JIDOKA_AI_PROVIDER === "agent-sdk"
+        ? "agent-sdk"
+        : "anthropic";
   return {
     dbPath: env.JIDOKA_DB ?? "./jidoka.db",
     port: Number(env.JIDOKA_PORT ?? 3000),
@@ -63,13 +72,19 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
     },
     sampleDir: env.JIDOKA_SAMPLE_DIR,
     agent: {
-      runner: env.JIDOKA_AGENT_RUNNER === "agent-sdk" ? "agent-sdk" : "in-process",
+      // Model calls on the CLI imply agent steps on the CLI too, unless overridden.
+      runner:
+        (env.JIDOKA_AGENT_RUNNER ?? (provider === "agent-sdk" ? "agent-sdk" : "in-process")) ===
+        "agent-sdk"
+          ? "agent-sdk"
+          : "in-process",
       model: env.JIDOKA_AGENT_MODEL,
       maxBudgetUsd: env.JIDOKA_AGENT_MAX_BUDGET_USD
         ? Number(env.JIDOKA_AGENT_MAX_BUDGET_USD)
         : undefined,
       concurrency: Number(
-        env.JIDOKA_AGENT_CONCURRENCY ?? (env.JIDOKA_AGENT_RUNNER === "agent-sdk" ? 1 : 4),
+        env.JIDOKA_AGENT_CONCURRENCY ??
+          (env.JIDOKA_AGENT_RUNNER === "agent-sdk" || provider === "agent-sdk" ? 1 : 4),
       ),
     },
     oauth: buildOAuthProviders({
