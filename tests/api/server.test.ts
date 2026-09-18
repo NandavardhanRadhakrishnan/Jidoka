@@ -90,6 +90,72 @@ test("a malformed JSON body is a 400, not a crash", async () => {
   expect(onboard.status).toBe(400);
 });
 
+test("a human can complete a task and reopen it", async () => {
+  const { deps, fetch } = app();
+  const task = insertTask(deps.db, {
+    sourceId: "manual",
+    externalId: "m9",
+    title: "Call the supplier",
+    body: "b",
+  });
+  deps.db.query("UPDATE tasks SET state = 'assigned_human', assignee = 'human' WHERE id = ?").run(
+    task.id,
+  );
+
+  const done = (await (
+    await fetch(
+      new Request(`http://localhost/api/tasks/${task.id}/complete`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ note: "supplier agreed to credit it" }),
+      }),
+    )
+  ).json()) as { task: { state: string; context: Record<string, unknown> } };
+
+  expect(done.task.state).toBe("done");
+  expect(done.task.context.completionNote).toBe("supplier agreed to credit it");
+  expect(done.task.context.completedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+
+  const reopened = (await (
+    await fetch(new Request(`http://localhost/api/tasks/${task.id}/reopen`, { method: "POST" }))
+  ).json()) as { task: { state: string; assignee: string; context: Record<string, unknown> } };
+
+  expect(reopened.task.state).toBe("assigned_human");
+  expect(reopened.task.assignee).toBe("human");
+  expect(reopened.task.context.completedAt).toBeUndefined();
+  expect(reopened.task.context.completionNote).toBeUndefined();
+});
+
+test("completing without a note works, completing twice is a no-op, unknown ids 404", async () => {
+  const { deps, fetch } = app();
+  const task = insertTask(deps.db, { sourceId: "manual", externalId: "m10", title: "T", body: "" });
+
+  const first = (await (
+    await fetch(
+      new Request(`http://localhost/api/tasks/${task.id}/complete`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({}),
+      }),
+    )
+  ).json()) as { task: { state: string; context: Record<string, unknown> } };
+  expect(first.task.state).toBe("done");
+  expect(first.task.context.completionNote).toBeUndefined();
+
+  const again = (await (
+    await fetch(new Request(`http://localhost/api/tasks/${task.id}/complete`, { method: "POST" }))
+  ).json()) as { task: { state: string; context: { completedAt: string } } };
+  expect(again.task.state).toBe("done");
+  expect(again.task.context.completedAt).toBe(first.task.context.completedAt as string);
+
+  expect(
+    (await fetch(new Request("http://localhost/api/tasks/ghost/complete", { method: "POST" }))).status,
+  ).toBe(404);
+  expect(
+    (await fetch(new Request("http://localhost/api/tasks/ghost/reopen", { method: "POST" }))).status,
+  ).toBe(404);
+});
+
 test("GET /api/tasks returns tasks", async () => {
   const { deps, fetch } = app();
   insertTask(deps.db, { sourceId: "outlook", externalId: "m1", title: "One", body: "b" });

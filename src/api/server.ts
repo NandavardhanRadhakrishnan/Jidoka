@@ -4,7 +4,9 @@ import { getTaskType, listTaskTypes, mergeTaskType, updateTaskType } from "../re
 import { getActivePipeline, getPipeline, listPipelines } from "../repo/pipelines";
 import {
   activateTypePipeline,
+  completeTask,
   confirmTaskType,
+  reopenTask,
   onboardType,
   onTaskIngested,
   skipOnboarding,
@@ -94,6 +96,22 @@ export function createServer(deps: AppDeps, extraRoutes?: Hono): Hono {
     const typeId = input.typeId;
     if (!getTaskType(deps.db, typeId)) return c.json({ error: "unknown type" }, 404);
     return c.json({ task: await confirmTaskType(deps, id, typeId) });
+  });
+
+  app.post("/api/tasks/:id/complete", async (c) => {
+    const id = c.req.param("id");
+    const task = getTask(deps.db, id);
+    if (!task) return c.json({ error: "unknown task" }, 404);
+    if (task.state === "done") return c.json({ task });
+
+    const input = await readJson<{ note?: string }>(c);
+    return c.json({ task: completeTask(deps, id, input?.note) });
+  });
+
+  app.post("/api/tasks/:id/reopen", (c) => {
+    const id = c.req.param("id");
+    if (!getTask(deps.db, id)) return c.json({ error: "unknown task" }, 404);
+    return c.json({ task: reopenTask(deps, id) });
   });
 
   app.post("/api/tasks/:id/skip-onboarding", async (c) => {

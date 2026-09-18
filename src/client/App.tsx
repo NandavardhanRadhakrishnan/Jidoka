@@ -6,6 +6,7 @@ import { TypeConfirm } from "./TypeConfirm";
 import { Onboarding } from "./Onboarding";
 import { NewTask } from "./NewTask";
 import { SignIn } from "./SignIn";
+import { TaskDetail } from "./TaskDetail";
 
 export function App() {
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -59,6 +60,12 @@ export function App() {
           onClose={() => setSelected(null)}
         />
       )}
+
+      {selected &&
+        selected.state !== "needs_type_confirmation" &&
+        !(selected.state === "needs_onboarding" && selectedType) && (
+          <TaskDetail task={selected} onChanged={refresh} onClose={() => setSelected(null)} />
+        )}
     </main>
   );
 }

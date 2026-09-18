@@ -154,6 +154,34 @@ export async function activateTypePipeline(
   return active;
 }
 
+/** A human marks the task finished; the note is kept with the task's context. */
+export function completeTask(deps: AppDeps, taskId: string, note?: string): Task {
+  const task = getTask(deps.db, taskId);
+  if (!task) throw new Error(`completeTask: unknown task ${taskId}`);
+
+  return updateTask(deps.db, taskId, {
+    state: "done",
+    context: {
+      ...task.context,
+      completedAt: new Date().toISOString(),
+      ...(note?.trim() ? { completionNote: note.trim() } : {}),
+    },
+  });
+}
+
+/** Undo a completion: back to whoever it was assigned to, or to a human. */
+export function reopenTask(deps: AppDeps, taskId: string): Task {
+  const task = getTask(deps.db, taskId);
+  if (!task) throw new Error(`reopenTask: unknown task ${taskId}`);
+
+  const { completedAt: _completedAt, completionNote: _note, ...context } = task.context;
+  return updateTask(deps.db, taskId, {
+    state: task.assignee === "ai" ? "assigned_ai" : "assigned_human",
+    assignee: task.assignee ?? "human",
+    context,
+  });
+}
+
 export async function skipOnboarding(deps: AppDeps, taskId: string): Promise<Task> {
   const task = getTask(deps.db, taskId);
   if (!task) throw new Error(`skipOnboarding: unknown task ${taskId}`);

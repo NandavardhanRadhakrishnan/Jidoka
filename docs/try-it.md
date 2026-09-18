@@ -164,6 +164,8 @@ and the task arrives assigned. `context` holds each step's output and
 | `POST` | `/api/tasks` | Inject a task and triage it |
 | `POST` | `/api/tasks/:id/type` | Answer an ambiguous triage |
 | `POST` | `/api/tasks/:id/skip-onboarding` | Assign to a human without a pipeline |
+| `POST` | `/api/tasks/:id/complete` | Mark done, with an optional `note` |
+| `POST` | `/api/tasks/:id/reopen` | Undo a completion |
 | `GET` | `/api/types` | Type registry with pipeline versions |
 | `PATCH` | `/api/types/:id` | Rename, re-describe, or `mergeInto` another type |
 | `POST` | `/api/types/:id/onboard` | Build a draft pipeline from a description |

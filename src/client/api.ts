@@ -43,6 +43,13 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ typeId }),
     }).then((r) => r.task),
+  completeTask: (taskId: string, note?: string) =>
+    json<{ task: Task }>(`/api/tasks/${taskId}/complete`, {
+      method: "POST",
+      body: JSON.stringify({ note: note ?? "" }),
+    }).then((r) => r.task),
+  reopenTask: (taskId: string) =>
+    json<{ task: Task }>(`/api/tasks/${taskId}/reopen`, { method: "POST" }).then((r) => r.task),
   skipOnboarding: (taskId: string) =>
     json<{ task: Task }>(`/api/tasks/${taskId}/skip-onboarding`, { method: "POST" }).then(
       (r) => r.task,
