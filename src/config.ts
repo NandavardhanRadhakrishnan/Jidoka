@@ -1,3 +1,6 @@
+import { buildOAuthProviders } from "./auth/providers";
+import type { OAuthProviderConfig } from "./auth/oauth";
+
 export interface McpServerConfig {
   name: string;
   command: string;
@@ -23,6 +26,8 @@ export interface Config {
   };
   /** Folder polled by the sample source; unset disables it. */
   sampleDir?: string;
+  /** Providers the browser sign-in flow can talk to, keyed by id. */
+  oauth: Record<string, OAuthProviderConfig>;
   mcpServers: McpServerConfig[];
 }
 
@@ -44,6 +49,19 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
       tenant: env.JIDOKA_OUTLOOK_TENANT ?? "common",
     },
     sampleDir: env.JIDOKA_SAMPLE_DIR,
+    oauth: buildOAuthProviders({
+      providersJson: env.JIDOKA_OAUTH_PROVIDERS,
+      outlook: {
+        clientId: env.JIDOKA_OUTLOOK_CLIENT_ID,
+        tenant: env.JIDOKA_OUTLOOK_TENANT ?? "common",
+      },
+      anthropic: {
+        clientId: env.JIDOKA_ANTHROPIC_OAUTH_CLIENT_ID,
+        authorizeUrl: env.JIDOKA_ANTHROPIC_OAUTH_AUTHORIZE_URL,
+        tokenUrl: env.JIDOKA_ANTHROPIC_OAUTH_TOKEN_URL,
+        scopes: env.JIDOKA_ANTHROPIC_OAUTH_SCOPES,
+      },
+    }),
     mcpServers: env.JIDOKA_MCP_SERVERS
       ? (JSON.parse(env.JIDOKA_MCP_SERVERS) as McpServerConfig[])
       : [],

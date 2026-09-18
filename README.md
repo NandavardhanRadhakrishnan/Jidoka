@@ -29,23 +29,51 @@ bun src/main.ts login-outlook              # one-time device-code login
 bun run dev
 ```
 
-## Model credentials
+## Credentials and signing in
 
-Three ways to authenticate, checked in this order:
+Four ways to authenticate, checked in this order:
 
 1. **API key** — `ANTHROPIC_API_KEY` (or `OPENAI_API_KEY` with `JIDOKA_AI_PROVIDER=openai`).
 2. **OAuth bearer token** — `ANTHROPIC_AUTH_TOKEN`.
-3. **Nothing set** — the Anthropic SDK resolves credentials itself, including a
+3. **Browser sign-in** — click *sign in* on the board (details below).
+4. **Nothing set** — the Anthropic SDK resolves credentials itself, including a
    profile stored on disk by `ant auth login`.
 
 The startup log says which one is in use. `JIDOKA_AI_BASE_URL` points the client at
 a gateway or proxy instead of the provider's endpoint.
 
-> **Signing in with a Claude subscription:** the token path above is the mechanism
-> a subscription-based login would use, but a claude.ai Pro/Max subscription is
-> billed for Anthropic's own apps, not for arbitrary third-party API traffic —
-> check Anthropic's current terms before relying on it. Jidoka does not implement
-> a browser sign-in flow of its own; it reads whatever credential you supply.
+### Browser sign-in
+
+`GET /api/auth/<provider>/start` redirects to the provider's login page; the
+provider redirects back to `/api/auth/<provider>/callback`, where the code is
+exchanged for tokens (authorization code + PKCE, S256). Tokens are stored in the
+`oauth_tokens` table and refreshed automatically before they expire. The header
+shows each provider's state, with *sign in* / *sign out*.
+
+Configure providers either with the Outlook shortcut (`JIDOKA_OUTLOOK_CLIENT_ID`
+is enough — Microsoft's endpoints are known), or explicitly:
+
+```bash
+export JIDOKA_OAUTH_PROVIDERS='[{
+  "id": "anthropic",
+  "clientId": "<your client id>",
+  "authorizeUrl": "<provider authorize endpoint>",
+  "tokenUrl": "<provider token endpoint>",
+  "scopes": ["..."]
+}]'
+```
+
+An `anthropic` entry here is used for model calls whenever no API key or token is
+set in the environment. The equivalent `JIDOKA_ANTHROPIC_OAUTH_CLIENT_ID`,
+`..._AUTHORIZE_URL`, `..._TOKEN_URL` and `..._SCOPES` variables do the same thing.
+
+> **About signing in with a Claude subscription:** this is the same shape of flow
+> as `/login` in Claude Code, but it needs a client id issued for *your* app.
+> Jidoka ships no client id, and reusing another product's would be credential
+> misuse. A claude.ai Pro/Max subscription is also billed for Anthropic's own
+> apps rather than arbitrary third-party API traffic, so check Anthropic's current
+> terms before relying on it. Everything else — redirect, PKCE, callback, storage,
+> refresh — is built and waiting for a client id you are entitled to use.
 
 ## Feeding it tasks
 
@@ -72,6 +100,8 @@ into Postman (it passes ids between requests for you).
 | `JIDOKA_OUTLOOK_CLIENT_ID` | — | Azure app registration (public client, `Mail.Read`) |
 | `JIDOKA_OUTLOOK_TENANT` | `common` | Azure tenant |
 | `JIDOKA_SAMPLE_DIR` | — | Folder polled by the sample source (e.g. `./samples`) |
+| `JIDOKA_OAUTH_PROVIDERS` | `[]` | JSON array of sign-in providers (id, clientId, authorizeUrl, tokenUrl, scopes) |
+| `JIDOKA_ANTHROPIC_OAUTH_CLIENT_ID` | — | Shortcut for an `anthropic` sign-in provider (with `..._AUTHORIZE_URL`, `..._TOKEN_URL`, `..._SCOPES`) |
 | `JIDOKA_MCP_SERVERS` | `[]` | JSON array of `{ name, command, args }` |
 
 MCP servers supply everything beyond ingestion: reading related mail, looking up

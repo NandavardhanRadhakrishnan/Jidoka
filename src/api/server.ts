@@ -20,8 +20,9 @@ async function readJson<T>(c: Context): Promise<T | null> {
   }
 }
 
-export function createServer(deps: AppDeps): Hono {
+export function createServer(deps: AppDeps, extraRoutes?: Hono): Hono {
   const app = new Hono();
+  if (extraRoutes) app.route("/", extraRoutes);
 
   app.get("/api/tasks", (c) => c.json({ tasks: listTasks(deps.db) }));
 

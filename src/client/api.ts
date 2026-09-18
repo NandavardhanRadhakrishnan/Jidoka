@@ -2,6 +2,14 @@ import type { Task } from "../domain/task";
 import type { TaskType } from "../domain/taskType";
 import type { Pipeline } from "../domain/pipeline";
 
+export interface AuthProviderStatus {
+  id: string;
+  connected: boolean;
+  expiresAt: string | null;
+  expired: boolean;
+  canRefresh: boolean;
+}
+
 export interface TypeWithPipelines extends TaskType {
   activePipelineId: string | null;
   pipelines: { id: string; version: number; status: string }[];
@@ -21,6 +29,10 @@ export const api = {
   tasks: () => json<{ tasks: Task[] }>("/api/tasks").then((r) => r.tasks),
   types: () => json<{ types: TypeWithPipelines[] }>("/api/types").then((r) => r.types),
   pipeline: (id: string) => json<{ pipeline: Pipeline }>(`/api/pipelines/${id}`).then((r) => r.pipeline),
+  auth: () =>
+    json<{ providers: AuthProviderStatus[] }>("/api/auth").then((r) => r.providers),
+  signOut: (providerId: string) =>
+    json<{ signedOut: boolean }>(`/api/auth/${providerId}/signout`, { method: "POST" }),
   createTask: (input: { title: string; body: string }) =>
     json<{ task: Task }>("/api/tasks", {
       method: "POST",

@@ -8,6 +8,7 @@ test("createApp wires the API and serves an empty board", async () => {
     pollIntervalMs: 60_000,
     ai: { provider: "anthropic", apiKey: "test-key" },
     outlook: { tenant: "common" },
+    oauth: {},
     mcpServers: [],
   });
 
@@ -29,6 +30,7 @@ test("the served routes send /api to the API and everything else to the page", a
     pollIntervalMs: 60_000,
     ai: { provider: "anthropic", apiKey: "test-key" },
     outlook: { tenant: "common" },
+    oauth: {},
     mcpServers: [],
   });
   const server = Bun.serve({ port: 0, routes: createRoutes(app) });

@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import * as oauthTokens from "../../repo/oauthTokens";
 
 /**
  * The slice of `fetch` this source needs. Narrower than `typeof fetch` so tests
@@ -53,29 +54,18 @@ function tokenUrl(tenant: string): string {
 }
 
 export function saveTokens(db: Database, tokens: TokenSet): void {
-  db.query(
-    `INSERT INTO oauth_tokens (provider, access_token, refresh_token, expires_at)
-     VALUES (?, ?, ?, ?)
-     ON CONFLICT (provider) DO UPDATE SET
-       access_token = excluded.access_token,
-       refresh_token = excluded.refresh_token,
-       expires_at = excluded.expires_at`,
-  ).run(PROVIDER, tokens.accessToken, tokens.refreshToken, tokens.expiresAt);
+  oauthTokens.saveTokens(db, PROVIDER, tokens);
 }
 
 export function loadTokens(db: Database): TokenSet | null {
-  const row = db
-    .query("SELECT access_token, refresh_token, expires_at FROM oauth_tokens WHERE provider = ?")
-    .get(PROVIDER) as
-    | { access_token: string; refresh_token: string; expires_at: number }
-    | null;
-  return row
-    ? {
-        accessToken: row.access_token,
-        refreshToken: row.refresh_token,
-        expiresAt: row.expires_at,
-      }
-    : null;
+  const stored = oauthTokens.loadTokens(db, PROVIDER);
+  // Outlook always returns a refresh token, so a null one just means "not connected".
+  if (!stored || stored.refreshToken === null) return null;
+  return {
+    accessToken: stored.accessToken,
+    refreshToken: stored.refreshToken,
+    expiresAt: stored.expiresAt,
+  };
 }
 
 export async function startDeviceLogin(deps: OutlookDeps): Promise<DeviceLogin> {

@@ -5,6 +5,7 @@ import { Board } from "./Board";
 import { TypeConfirm } from "./TypeConfirm";
 import { Onboarding } from "./Onboarding";
 import { NewTask } from "./NewTask";
+import { SignIn } from "./SignIn";
 
 export function App() {
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -30,6 +31,7 @@ export function App() {
       <header>
         <h1>Jidoka</h1>
         <div className="actions">
+          <SignIn />
           <NewTask onCreated={refresh} />
           <button onClick={() => void refresh()}>Refresh</button>
         </div>

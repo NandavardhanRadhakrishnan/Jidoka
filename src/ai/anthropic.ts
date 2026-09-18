@@ -7,18 +7,43 @@ export interface AnthropicOptions {
   authToken?: string;
   /** Point at a gateway or proxy instead of api.anthropic.com. */
   baseUrl?: string;
+  /**
+   * Supplies a bearer token per request — used by the browser sign-in flow, where
+   * the stored token is refreshed behind this call.
+   */
+  getAuthToken?: () => Promise<string | null>;
   model?: string;
 }
 
 export function createAnthropicProvider(options: AnthropicOptions = {}): AiProvider {
   // With neither credential set, the SDK resolves them itself: ANTHROPIC_API_KEY,
   // then ANTHROPIC_AUTH_TOKEN, then an `ant auth login` profile on disk.
-  const client = new Anthropic({
+  const baseOptions = {
     ...(options.apiKey ? { apiKey: options.apiKey } : {}),
     ...(options.authToken ? { authToken: options.authToken } : {}),
     ...(options.baseUrl ? { baseURL: options.baseUrl } : {}),
-  });
+  };
+  const staticClient = new Anthropic(baseOptions);
   const model = options.model ?? "claude-opus-5";
+
+  // A signed-in token can be refreshed between calls, so rebuild the client when
+  // the token changes; otherwise reuse the one built above.
+  let cachedToken: string | null = null;
+  let cachedClient: Anthropic | null = null;
+
+  async function clientFor(): Promise<Anthropic> {
+    if (!options.getAuthToken) return staticClient;
+
+    const token = await options.getAuthToken();
+    if (!token) {
+      throw new Error("not signed in — no Anthropic token is stored. Open /api/auth/anthropic/start");
+    }
+    if (token !== cachedToken || !cachedClient) {
+      cachedToken = token;
+      cachedClient = new Anthropic({ ...baseOptions, authToken: token });
+    }
+    return cachedClient;
+  }
 
   return {
     id: "anthropic",
@@ -41,6 +66,7 @@ export function createAnthropicProvider(options: AnthropicOptions = {}): AiProvi
         return { role: m.role, content: m.content };
       });
 
+      const client = await clientFor();
       const response = await client.messages.create({
         model,
         max_tokens: req.maxTokens ?? 16000,

@@ -4,6 +4,7 @@ import { openDb, migrate } from "./db";
 import { createProvider, describeCredentials } from "./ai";
 import { McpManager } from "./mcp/manager";
 import { createServer } from "./api/server";
+import { createAuthRoutes, getValidAccessToken } from "./api/auth";
 import { onTaskIngested, type AppDeps } from "./orchestrator";
 import { startPoller } from "./sources/poller";
 import { createOutlookSource } from "./sources/outlook/source";
@@ -26,17 +27,25 @@ export function createApp(config: Config): App {
   const db = openDb(config.dbPath);
   migrate(db);
 
+  const authDeps = { db, providers: config.oauth };
+
   const mcp = new McpManager();
   const deps: AppDeps = {
     db,
-    provider: createProvider(config),
+    // With no key or token in the environment, fall back to whatever the browser
+    // sign-in flow stored for this provider.
+    provider: createProvider(config, {
+      getAuthToken: config.oauth[config.ai.provider]
+        ? () => getValidAccessToken(authDeps, config.ai.provider)
+        : undefined,
+    }),
     mcp: {
       listTools: () => mcp.listTools(),
       callTool: (server, tool, input) => mcp.callTool(server, tool, input),
     },
   };
 
-  const api = createServer(deps);
+  const api = createServer(deps, createAuthRoutes(authDeps));
 
   return {
     deps,
