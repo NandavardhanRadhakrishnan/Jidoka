@@ -140,9 +140,19 @@ export async function onboardType(
   return insertPipeline(deps.db, { typeId, definition });
 }
 
+/** Runs the newly active pipeline over every task of its type that was waiting. */
+export async function processWaitingTasks(deps: AppDeps, pipeline: Pipeline): Promise<void> {
+  for (const task of listTasks(deps.db)) {
+    if (task.typeId === pipeline.typeId && task.state === "needs_onboarding") {
+      await runPipelineForTask(deps, task, pipeline);
+    }
+  }
+}
+
 export async function activateTypePipeline(
   deps: AppDeps,
   pipelineId: string,
+  options: { background?: boolean } = {},
 ): Promise<Pipeline> {
   const pipeline = getPipeline(deps.db, pipelineId);
   if (!pipeline) throw new Error(`activateTypePipeline: unknown pipeline ${pipelineId}`);
@@ -150,11 +160,17 @@ export async function activateTypePipeline(
   const active = activatePipeline(deps.db, pipelineId);
   updateTaskType(deps.db, pipeline.typeId, { status: "active" });
 
-  for (const task of listTasks(deps.db)) {
-    if (task.typeId === pipeline.typeId && task.state === "needs_onboarding") {
-      await runPipelineForTask(deps, task, active);
-    }
+  // A pipeline with an agent step can run for minutes, far longer than an HTTP
+  // request should be held open, so callers over HTTP process in the background
+  // and watch the board for the tasks to move.
+  if (options.background) {
+    void processWaitingTasks(deps, active).catch((error) => {
+      console.error(`[orchestrator] processing tasks for ${pipeline.typeId} failed:`, error);
+    });
+  } else {
+    await processWaitingTasks(deps, active);
   }
+
   return active;
 }
 

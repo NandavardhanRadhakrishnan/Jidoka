@@ -231,6 +231,9 @@ test("POST /api/types/:id/onboard builds a draft pipeline and activate publishes
   ).json()) as { pipeline: { status: string } };
 
   expect(activated.pipeline.status).toBe("active");
+
+  // Waiting tasks are processed after the response, so the route must not block.
+  await Bun.sleep(10);
 });
 
 test("a request for an unknown task returns 404", async () => {

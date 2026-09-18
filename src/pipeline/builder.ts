@@ -15,6 +15,7 @@ The pipeline runs automatically for every task of its type. Reply with JSON only
 Step shapes:
 - { "id": "s1", "type": "ai", "prompt": "<prompt, may use {{task.title}}, {{task.body}}, {{task.metadata.<key>}}, {{context.<key>}}>", "output": "<context key>" }
 - { "id": "s1b", "type": "agent", "prompt": "<what to find out and what to produce>", "tools": ["<server>__<tool>", ...], "maxIterations": 6, "output": "<context key>" }
+  "tools" may be an empty list. A toolless agent step still runs a real session and leaves a conversation a human can resume from a handoff, which is what you want when no MCP tools are available.
 - { "id": "s2", "type": "mcp_tool", "server": "<server>", "tool": "<tool>", "input": { ... }, "output": "<context key>" }
 - { "id": "s3", "type": "branch", "on": "<context key>", "cases": { "<value>": [ ...steps ] }, "default": [ ...steps ] }
 - { "id": "s4", "type": "assign", "to": "ai" | "human", "note": "<optional note>", "open": [ ...handoff targets ] }
@@ -28,7 +29,7 @@ front of them when they pick the task up:
 
 Rules:
 - Use an "ai" step for a single self-contained judgement (summarize, classify, draft) over what the task already contains.
-- Use an "agent" step when gathering context needs an unknown number of lookups — "read the related mails", "find the matching order" — and list exactly the tools it may use.
+- Use an "agent" step when gathering context needs an unknown number of lookups — "read the related mails", "find the matching order" — and list exactly the tools it may use, or when the point is to leave a session a human will resume, in which case the tools list may be empty.
 - Use an "mcp_tool" step when the exact call is known in advance.
 - When assigning to a human, add handoff targets so they do not have to go hunting: the source item's URL when the task has one, any draft the pipeline produced, and a session target for an agent step whose conversation is worth resuming (its id is at "<that step's output>_session").
 - Step ids are unique within the pipeline.

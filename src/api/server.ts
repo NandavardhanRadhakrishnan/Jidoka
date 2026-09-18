@@ -153,7 +153,8 @@ export function createServer(deps: AppDeps, extraRoutes?: Hono): Hono {
   app.post("/api/pipelines/:id/activate", async (c) => {
     const id = c.req.param("id");
     if (!getPipeline(deps.db, id)) return c.json({ error: "unknown pipeline" }, 404);
-    return c.json({ pipeline: await activateTypePipeline(deps, id) });
+    // Waiting tasks are processed after the response; the board shows them move.
+    return c.json({ pipeline: await activateTypePipeline(deps, id, { background: true }) });
   });
 
   return app;

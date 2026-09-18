@@ -179,7 +179,13 @@ if (import.meta.main) {
       );
     }
 
-    Bun.serve({ port: config.port, routes: createRoutes(app) });
+    Bun.serve({
+      port: config.port,
+      // Model calls keep a request open for a long time with no bytes flowing;
+      // the default idle timeout closes such a connection mid-call.
+      idleTimeout: 255,
+      routes: createRoutes(app),
+    });
     console.log(`Jidoka on http://localhost:${config.port}`);
   }
 }

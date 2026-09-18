@@ -13,7 +13,13 @@ const AgentStep = z.object({
   id: z.string(),
   type: z.literal("agent"),
   prompt: z.string(),
-  tools: z.array(z.string()).min(1),
+  /**
+   * Tools the step may use. May be empty: a toolless agent step is still a real
+   * session — it reasons over the task and leaves a conversation a human can
+   * resume from a handoff, which is the only option when no MCP server is
+   * configured.
+   */
+  tools: z.array(z.string()).default([]),
   maxIterations: z.number().int().min(1).max(20).default(6),
   output: z.string(),
 });
