@@ -28,6 +28,8 @@ Run with `JIDOKA_SAMPLE_DIR=./samples` to get tasks without any credentials; `RE
 - `src/sources/` — ingestion only: the `TaskSource` interface, the poller, the Outlook source, and the sample folder source.
 - `src/mcp/` — MCP client; read and write against external systems goes here, never into a source.
 - `src/pipeline/` — `executor.ts` runs a definition, `builder.ts` is the agent that writes one.
+- `src/agent/` — the `agent` step's tool loop behind one `AgentRunner` interface: `runner.ts` (in-process, API key), `claudeAgentSdk.ts` (Claude Code CLI via the Agent SDK, subscription auth), `limit.ts` (concurrency cap). The step's tool allowlist is enforced in Jidoka's code in both backends.
+- `src/auth/` + `src/api/auth.ts` — browser OAuth sign-in (PKCE), tokens in `oauth_tokens`, refreshed on use.
 - `src/orchestrator.ts` — the only module that changes a task's state. Read this first.
 - `src/api/server.ts` — thin Hono routes over the orchestrator.
 - `src/client/` — React board, served by `src/main.ts` (`/api/*` must stay a more specific route than the HTML catch-all).

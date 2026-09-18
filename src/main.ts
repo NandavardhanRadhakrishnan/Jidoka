@@ -5,6 +5,9 @@ import { createProvider, describeCredentials } from "./ai";
 import { McpManager } from "./mcp/manager";
 import { createServer } from "./api/server";
 import { createAuthRoutes, getValidAccessToken } from "./api/auth";
+import { createInProcessRunner, type AgentRunner } from "./agent/runner";
+import { createAgentSdkRunner } from "./agent/claudeAgentSdk";
+import { withConcurrencyLimit } from "./agent/limit";
 import { onTaskIngested, type AppDeps } from "./orchestrator";
 import { startPoller } from "./sources/poller";
 import { createOutlookSource } from "./sources/outlook/source";
@@ -30,15 +33,35 @@ export function createApp(config: Config): App {
   const authDeps = { db, providers: config.oauth };
 
   const mcp = new McpManager();
+  // With no key or token in the environment, fall back to whatever the browser
+  // sign-in flow stored for this provider.
+  const provider = createProvider(config, {
+    getAuthToken: config.oauth[config.ai.provider]
+      ? () => getValidAccessToken(authDeps, config.ai.provider)
+      : undefined,
+  });
+
+  const runAgent: AgentRunner = withConcurrencyLimit(
+    config.agent.runner === "agent-sdk"
+      ? createAgentSdkRunner({
+          mcpServers: Object.fromEntries(
+            config.mcpServers.map((s) => [s.name, { command: s.command, args: s.args }]),
+          ),
+          ...(config.agent.model ? { model: config.agent.model } : {}),
+          ...(config.agent.maxBudgetUsd ? { maxBudgetUsd: config.agent.maxBudgetUsd } : {}),
+        })
+      : createInProcessRunner({
+          provider,
+          listTools: () => mcp.listTools(),
+          callTool: (server, tool, input) => mcp.callTool(server, tool, input),
+        }),
+    config.agent.concurrency,
+  );
+
   const deps: AppDeps = {
     db,
-    // With no key or token in the environment, fall back to whatever the browser
-    // sign-in flow stored for this provider.
-    provider: createProvider(config, {
-      getAuthToken: config.oauth[config.ai.provider]
-        ? () => getValidAccessToken(authDeps, config.ai.provider)
-        : undefined,
-    }),
+    runAgent,
+    provider,
     mcp: {
       listTools: () => mcp.listTools(),
       callTool: (server, tool, input) => mcp.callTool(server, tool, input),
@@ -103,6 +126,11 @@ if (import.meta.main) {
     console.log(
       `AI provider: ${config.ai.provider} (${config.ai.model ?? "default model"}), ` +
         `credentials: ${describeCredentials(config)}`,
+    );
+    console.log(
+      `Agent steps: ${config.agent.runner}` +
+        (config.agent.runner === "agent-sdk" ? " (Claude Code CLI login)" : " (AiProvider)") +
+        `, max ${config.agent.concurrency} at a time`,
     );
     await app.mcp.connectAll(config.mcpServers);
 

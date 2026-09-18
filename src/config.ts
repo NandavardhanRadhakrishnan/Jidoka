@@ -26,6 +26,19 @@ export interface Config {
   };
   /** Folder polled by the sample source; unset disables it. */
   sampleDir?: string;
+  agent: {
+    /**
+     * Who runs an `agent` step's tool loop. "in-process" uses the AiProvider and
+     * Jidoka's MCP client (API key). "agent-sdk" hands the loop to the Claude Code
+     * CLI through the Agent SDK, so the CLI's own login — including a
+     * subscription — covers the run and every MCP call in it.
+     */
+    runner: "in-process" | "agent-sdk";
+    model?: string;
+    maxBudgetUsd?: number;
+    /** Parallel agent runs. Subscription runs share one account's limits. */
+    concurrency: number;
+  };
   /** Providers the browser sign-in flow can talk to, keyed by id. */
   oauth: Record<string, OAuthProviderConfig>;
   mcpServers: McpServerConfig[];
@@ -49,6 +62,16 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
       tenant: env.JIDOKA_OUTLOOK_TENANT ?? "common",
     },
     sampleDir: env.JIDOKA_SAMPLE_DIR,
+    agent: {
+      runner: env.JIDOKA_AGENT_RUNNER === "agent-sdk" ? "agent-sdk" : "in-process",
+      model: env.JIDOKA_AGENT_MODEL,
+      maxBudgetUsd: env.JIDOKA_AGENT_MAX_BUDGET_USD
+        ? Number(env.JIDOKA_AGENT_MAX_BUDGET_USD)
+        : undefined,
+      concurrency: Number(
+        env.JIDOKA_AGENT_CONCURRENCY ?? (env.JIDOKA_AGENT_RUNNER === "agent-sdk" ? 1 : 4),
+      ),
+    },
     oauth: buildOAuthProviders({
       providersJson: env.JIDOKA_OAUTH_PROVIDERS,
       outlook: {

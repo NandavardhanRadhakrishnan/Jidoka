@@ -18,12 +18,15 @@ import {
 } from "./repo/pipelines";
 import { triageTask } from "./triage/triage";
 import { runPipeline, type ToolCaller } from "./pipeline/executor";
+import type { AgentRunner } from "./agent/runner";
 import { buildPipeline } from "./pipeline/builder";
 
 export interface AppDeps {
   db: Database;
   provider: AiProvider;
   mcp: { listTools(): ToolSpec[]; callTool: ToolCaller };
+  /** Backend for `agent` steps; the executor's in-process loop when unset. */
+  runAgent?: AgentRunner;
 }
 
 export async function onTaskIngested(deps: AppDeps, task: Task): Promise<Task> {
@@ -79,6 +82,7 @@ export async function runPipelineForTask(
         provider: deps.provider,
         callTool: deps.mcp.callTool,
         listTools: () => deps.mcp.listTools(),
+        ...(deps.runAgent ? { runAgent: deps.runAgent } : {}),
         loadPipeline: (typeId, version) =>
           listPipelines(deps.db, typeId).find((p) => p.version === version)?.definition ?? null,
         self: { typeId: active.typeId, version: active.version },

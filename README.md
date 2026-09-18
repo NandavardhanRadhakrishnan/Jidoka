@@ -42,6 +42,32 @@ Four ways to authenticate, checked in this order:
 The startup log says which one is in use. `JIDOKA_AI_BASE_URL` points the client at
 a gateway or proxy instead of the provider's endpoint.
 
+### Agent steps: API key or subscription
+
+An `agent` pipeline step runs a tool loop. Two backends run it, chosen with
+`JIDOKA_AGENT_RUNNER`:
+
+| | `in-process` (default) | `agent-sdk` |
+|---|---|---|
+| Loop runs in | Jidoka | the Claude Code CLI, via `@anthropic-ai/claude-agent-sdk` |
+| MCP calls by | Jidoka's MCP client | the CLI, using the servers the step is allowed |
+| Auth | API key | whatever the CLI is logged in as, including a subscription |
+| Needs | a key | `claude` installed and logged in on the host |
+
+Both enforce the step's tool allowlist in Jidoka's own code — the SDK backend
+passes `allowedTools` *and* a `canUseTool` callback, and runs in `dontAsk` mode so
+anything unlisted is denied rather than prompted. It never uses
+`bypassPermissions`, and it clears `ANTHROPIC_API_KEY` from the CLI's environment
+so a stray key cannot silently bill the API instead.
+
+Subscription runs share one personal account's limits, so keep them few:
+`JIDOKA_AGENT_CONCURRENCY` defaults to 1 for `agent-sdk` and 4 for `in-process`.
+`JIDOKA_AGENT_MODEL` and `JIDOKA_AGENT_MAX_BUDGET_USD` bound a run.
+
+Triage and pipeline building still go through the `AiProvider`, so they need an
+API key (or an OpenAI-compatible endpoint) even when agent steps run on a
+subscription.
+
 ### Browser sign-in
 
 `GET /api/auth/<provider>/start` redirects to the provider's login page; the
@@ -100,6 +126,10 @@ into Postman (it passes ids between requests for you).
 | `JIDOKA_OUTLOOK_CLIENT_ID` | — | Azure app registration (public client, `Mail.Read`) |
 | `JIDOKA_OUTLOOK_TENANT` | `common` | Azure tenant |
 | `JIDOKA_SAMPLE_DIR` | — | Folder polled by the sample source (e.g. `./samples`) |
+| `JIDOKA_AGENT_RUNNER` | `in-process` | `in-process` (API key) or `agent-sdk` (Claude Code CLI, subscription) |
+| `JIDOKA_AGENT_CONCURRENCY` | `1` sdk / `4` in-process | Parallel agent runs |
+| `JIDOKA_AGENT_MODEL` | — | Model for agent runs |
+| `JIDOKA_AGENT_MAX_BUDGET_USD` | — | Per-run budget ceiling (agent-sdk) |
 | `JIDOKA_OAUTH_PROVIDERS` | `[]` | JSON array of sign-in providers (id, clientId, authorizeUrl, tokenUrl, scopes) |
 | `JIDOKA_ANTHROPIC_OAUTH_CLIENT_ID` | — | Shortcut for an `anthropic` sign-in provider (with `..._AUTHORIZE_URL`, `..._TOKEN_URL`, `..._SCOPES`) |
 | `JIDOKA_MCP_SERVERS` | `[]` | JSON array of `{ name, command, args }` |

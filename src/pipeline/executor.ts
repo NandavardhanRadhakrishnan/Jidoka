@@ -1,7 +1,7 @@
-import type { AiMessage, AiProvider, AiToolResult, ToolSpec } from "../ai/provider";
+import type { AiProvider, ToolSpec } from "../ai/provider";
 import type { Assignee, Task } from "../domain/task";
 import type { PipelineDefinition, PipelineStep } from "../domain/pipeline";
-import { TOOL_SEPARATOR } from "../mcp/names";
+import { createInProcessRunner, type AgentRunner } from "../agent/runner";
 import { renderInput, renderTemplate, type TemplateScope } from "./template";
 
 export type ToolCaller = (
@@ -18,6 +18,11 @@ export interface ExecutorDeps {
   loadPipeline: PipelineLoader;
   /** Tool catalogue for agent steps; names are `server__tool`. */
   listTools?: () => ToolSpec[];
+  /**
+   * Backend for `agent` steps. Defaults to the in-process loop over `provider`
+   * and `callTool`; set it to the Agent SDK runner to use subscription auth.
+   */
+  runAgent?: AgentRunner;
   /** The pipeline being run, so that a self-call is detected as a loop. */
   self?: { typeId: string; version: number };
 }
@@ -78,55 +83,36 @@ async function runSteps(
         break;
       }
       case "agent": {
-        const catalogue = deps.listTools?.() ?? [];
-        const specs = catalogue.filter((t) => step.tools.includes(t.name));
-        const missing = step.tools.filter((name) => !specs.some((t) => t.name === name));
-        if (missing.length) {
-          throw new Error(`agent step ${step.id}: unavailable tools ${missing.join(", ")}`);
-        }
-
-        const messages: AiMessage[] = [
-          { role: "user", content: renderTemplate(step.prompt, scope) },
-        ];
-        const failures = new Map<string, number>();
-        let text = "";
-
-        for (let turn = 0; turn < step.maxIterations; turn++) {
-          const result = await deps.provider.complete({
-            messages,
-            tools: specs,
-            maxTokens: 8000,
+        const runner =
+          deps.runAgent ??
+          createInProcessRunner({
+            provider: deps.provider,
+            listTools: () => deps.listTools?.() ?? [],
+            callTool: deps.callTool,
           });
-          if (result.text) text = result.text;
-          if (!result.toolCalls.length) break;
 
-          messages.push({ role: "assistant", content: result.text, raw: result.raw });
-
-          const results: AiToolResult[] = [];
-          for (const call of result.toolCalls) {
-            const index = call.name.indexOf(TOOL_SEPARATOR);
-            if (index === -1) throw new Error(`agent step ${step.id}: bad tool name ${call.name}`);
-            const server = call.name.slice(0, index);
-            const tool = call.name.slice(index + TOOL_SEPARATOR.length);
-
-            try {
-              const output = await deps.callTool(server, tool, call.input);
-              results.push({ callId: call.id, content: output });
-            } catch (error) {
-              const count = (failures.get(call.name) ?? 0) + 1;
-              failures.set(call.name, count);
-              const message = error instanceof Error ? error.message : String(error);
-              if (count > 1) {
-                throw new Error(`agent step ${step.id}: ${call.name} failed twice: ${message}`);
-              }
-              results.push({ callId: call.id, content: message, isError: true });
-            }
-            state.log.push({ stepId: step.id, type: "agent", output: call.name });
-          }
-          messages.push({ role: "tool_results", results });
+        let result;
+        try {
+          result = await runner.run({
+            prompt: renderTemplate(step.prompt, scope),
+            allowedTools: step.tools,
+            maxTurns: step.maxIterations,
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          throw new Error(`agent step ${step.id}: ${message}`);
         }
 
-        state.context[step.output] = text;
+        for (const call of result.toolCalls) {
+          state.log.push({
+            stepId: step.id,
+            type: "agent",
+            output: call.name,
+            ...(call.error ? { error: call.error } : {}),
+          });
+        }
+
+        state.context[step.output] = result.text;
         state.log.push({ stepId: step.id, type: step.type, output: step.output });
         break;
       }
