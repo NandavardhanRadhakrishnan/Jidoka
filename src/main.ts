@@ -153,11 +153,18 @@ if (import.meta.main) {
     );
     await app.mcp.connectAll(config.mcpServers);
 
-    const discovered = await discoverExtensions(app.deps.db, config.extensionsDir);
-    console.log(
-      `${discovered.valid.length} extension(s) discovered` +
-        (discovered.invalid.length ? ` (${discovered.invalid.length} invalid)` : ""),
-    );
+    try {
+      const discovered = await discoverExtensions(app.deps.db, config.extensionsDir);
+      console.log(
+        `${discovered.valid.length} extension(s) discovered` +
+          (discovered.invalid.length ? ` (${discovered.invalid.length} invalid)` : ""),
+      );
+    } catch (error) {
+      console.warn(
+        `Extension discovery failed for "${config.extensionsDir}": ` +
+          (error instanceof Error ? error.message : String(error)),
+      );
+    }
 
     const sources: TaskSource[] = [];
     if (config.outlook.clientId) {

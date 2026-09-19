@@ -44,8 +44,12 @@ export function createExtensionRoutes(deps: ExtensionRoutesDeps): Hono {
   app.get("/api/extensions", (c) => c.json({ extensions: list() }));
 
   app.post("/api/extensions/rescan", async (c) => {
-    const discovered = await discoverExtensions(deps.db, deps.extensionsDir);
-    return c.json({ discovered });
+    try {
+      const discovered = await discoverExtensions(deps.db, deps.extensionsDir);
+      return c.json({ discovered });
+    } catch (error) {
+      return c.json({ error: errorMessage(error) }, 500);
+    }
   });
 
   app.post("/api/extensions/:id/connect/api-key", async (c) => {
@@ -139,6 +143,7 @@ export function createExtensionRoutes(deps: ExtensionRoutesDeps): Hono {
     const id = c.req.param("id");
     if (!extensionsRepo.get(deps.db, id)) return c.json({ error: "unknown extension" }, 404);
     deps.vault.disconnect(id);
+    extensionsRepo.setEnabled(deps.db, id, false);
     return c.json({ disconnected: true });
   });
 

@@ -19,6 +19,9 @@ export function Extensions() {
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const refresh = useCallback(async () => {
+    setConnectingId(null);
+    setDevice(null);
+    setApiKeyValue("");
     try {
       setExtensions(await api.extensions());
     } catch {
@@ -168,7 +171,7 @@ export function Extensions() {
                   </button>
                 )}
 
-              {connectingId === ext.id && ext.auth.mode === "api-key" && (
+              {connectingId === ext.id && ext.auth && ext.auth.mode === "api-key" && (
                 <div className="connect-form">
                   <label>
                     {ext.auth.label}
@@ -178,13 +181,13 @@ export function Extensions() {
                 </div>
               )}
 
-              {connectingId === ext.id && ext.auth.mode === "oauth2-auth-code-pkce" && (
+              {connectingId === ext.id && ext.auth && ext.auth.mode === "oauth2-auth-code-pkce" && (
                 <a className="link" href={`/api/extensions/${ext.id}/connect/pkce/start`}>
                   Continue in browser
                 </a>
               )}
 
-              {connectingId === ext.id && ext.auth.mode === "oauth2-device-code" && !device && (
+              {connectingId === ext.id && ext.auth && ext.auth.mode === "oauth2-device-code" && !device && (
                 <button onClick={() => startDevice(ext.id)}>Connect</button>
               )}
 

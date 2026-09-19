@@ -92,6 +92,24 @@ test("rescan discovers a newly-written folder without a restart", async () => {
   expect(await response.json()).toEqual({ discovered: { valid: ["notion"], invalid: [] } });
 });
 
+test("rescan returns a 500 with a JSON error when extensionsDir is not a directory", async () => {
+  const db = openDb(":memory:");
+  migrate(db);
+  const parent = await freshDir();
+  const notADir = join(parent, "not-a-directory");
+  await writeFile(notADir, "just a file");
+  const vault = createVault({ db });
+  const app = createExtensionRoutes({ db, vault, extensionsDir: notADir });
+
+  const response = await app.fetch(
+    new Request("http://localhost/api/extensions/rescan", { method: "POST" }),
+  );
+  expect(response.status).toBe(500);
+  expect(response.headers.get("content-type")).toContain("application/json");
+  const body = (await response.json()) as { error?: string };
+  expect(typeof body.error).toBe("string");
+});
+
 test("connecting with an api key stores it, then shows connected", async () => {
   const { dir, db, fetch } = await setup();
   await writeManifest(dir, "notion", apiKeyManifest);
@@ -277,9 +295,10 @@ test("disable and disconnect", async () => {
   expect(await disconnected.json()).toEqual({ disconnected: true });
 
   const list = (await (await fetch(new Request("http://localhost/api/extensions"))).json()) as {
-    extensions: { status: string }[];
+    extensions: { status: string; enabled: boolean }[];
   };
   expect(list.extensions[0]?.status).toBe("not_connected");
+  expect(list.extensions[0]?.enabled).toBe(false);
 });
 
 test("an unknown extension id is a 404, not a vault call", async () => {

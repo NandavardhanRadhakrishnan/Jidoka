@@ -26,7 +26,7 @@ export interface ExtensionListItem {
   name: string;
   summary: string;
   readOnly: boolean;
-  auth: ExtensionAuth;
+  auth: ExtensionAuth | null;
   enabled: boolean;
   valid: boolean;
   error: string | null;

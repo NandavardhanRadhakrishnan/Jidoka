@@ -167,6 +167,7 @@ into Postman (it passes ids between requests for you).
 | `JIDOKA_OUTLOOK_CLIENT_ID` | — | Azure app registration (public client, `Mail.Read`) |
 | `JIDOKA_OUTLOOK_TENANT` | `common` | Azure tenant |
 | `JIDOKA_SAMPLE_DIR` | — | Folder polled by the sample source (e.g. `./samples`) |
+| `JIDOKA_EXTENSIONS_DIR` | `./extensions` | Folder scanned for extension manifests; always on, a missing/empty directory is a no-op |
 | `JIDOKA_TERMINAL` | — | Launcher for handoff commands, `{{command}}` substituted; unset means copy-only |
 | `JIDOKA_AGENT_RUNNER` | `in-process` | `in-process` (API key) or `agent-sdk` (Claude Code CLI, subscription) |
 | `JIDOKA_AGENT_CONCURRENCY` | `1` sdk / `4` in-process | Parallel agent runs |
