@@ -115,13 +115,23 @@ export function Extensions() {
   }
 
   async function disable(id: string) {
-    await api.disableExtension(id);
-    await refresh();
+    setError(null);
+    try {
+      await api.disableExtension(id);
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
   }
 
   async function disconnect(id: string) {
-    await api.disconnectExtension(id);
-    await refresh();
+    setError(null);
+    try {
+      await api.disconnectExtension(id);
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
   }
 
   function dotClass(status: ExtensionListItem["status"]): string {
@@ -209,7 +219,15 @@ export function Extensions() {
             </div>
           ))}
 
-          <button className="secondary" onClick={() => setOpen(false)}>
+          <button
+            className="secondary"
+            onClick={() => {
+              stopPolling();
+              setDevice(null);
+              setConnectingId(null);
+              setOpen(false);
+            }}
+          >
             Close
           </button>
         </div>
