@@ -44,4 +44,24 @@ export const MIGRATIONS: string[] = [
      refresh_token TEXT NOT NULL,
      expires_at INTEGER NOT NULL
    )`,
+  `CREATE TABLE IF NOT EXISTS extensions (
+     id TEXT PRIMARY KEY,
+     name TEXT NOT NULL,
+     version TEXT NOT NULL,
+     summary TEXT NOT NULL,
+     read_only INTEGER NOT NULL,
+     auth_mode TEXT NOT NULL,
+     auth_config TEXT NOT NULL,
+     expected_mcp_server TEXT,
+     enabled INTEGER NOT NULL DEFAULT 0,
+     valid INTEGER NOT NULL DEFAULT 1,
+     error TEXT
+   )`,
+  `CREATE TABLE IF NOT EXISTS extension_credentials (
+     extension_id TEXT PRIMARY KEY REFERENCES extensions(id) ON DELETE CASCADE,
+     auth_mode TEXT NOT NULL,
+     payload TEXT NOT NULL,
+     status TEXT NOT NULL,
+     updated_at INTEGER NOT NULL
+   )`,
 ];
