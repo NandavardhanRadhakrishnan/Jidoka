@@ -144,3 +144,16 @@ test("re-running discovery after enabling an extension leaves it enabled", async
 
   await rm(dir, { recursive: true, force: true });
 });
+
+test("a loose file directly in the extensions root is silently skipped", async () => {
+  const dir = await freshDir();
+  const db = freshDb();
+  await writeFile(join(dir, "not-a-folder.txt"), "just a file");
+
+  const result = await discoverExtensions(db, dir);
+
+  expect(result.valid).toEqual([]);
+  expect(result.invalid).toEqual([]);
+
+  await rm(dir, { recursive: true, force: true });
+});

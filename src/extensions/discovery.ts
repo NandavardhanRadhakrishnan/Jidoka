@@ -32,6 +32,7 @@ export async function discoverExtensions(db: Database, dir: string): Promise<Dis
       raw = await readFile(manifestPath, "utf8");
     } catch (error) {
       if (isEnoent(error)) continue;
+      if ((error as NodeJS.ErrnoException).code === "ENOTDIR") continue;
       throw error;
     }
 
