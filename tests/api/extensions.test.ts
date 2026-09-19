@@ -301,6 +301,43 @@ test("disable and disconnect", async () => {
   expect(list.extensions[0]?.enabled).toBe(false);
 });
 
+test("disconnect clears enabled flag even when not previously disabled", async () => {
+  const { dir, db, fetch } = await setup();
+  await writeManifest(dir, "notion", apiKeyManifest);
+  await discoverExtensions(db, dir);
+
+  // Connect the extension
+  await fetch(
+    new Request("http://localhost/api/extensions/notion/connect/api-key", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ apiKey: "k" }),
+    }),
+  );
+
+  // Enable it
+  await fetch(new Request("http://localhost/api/extensions/notion/enable", { method: "POST" }));
+
+  // Verify it's enabled before disconnect
+  let list = (await (await fetch(new Request("http://localhost/api/extensions"))).json()) as {
+    extensions: { status: string; enabled: boolean }[];
+  };
+  expect(list.extensions[0]?.enabled).toBe(true);
+
+  // Now disconnect without disabling first
+  const disconnected = await fetch(
+    new Request("http://localhost/api/extensions/notion/disconnect", { method: "POST" }),
+  );
+  expect(await disconnected.json()).toEqual({ disconnected: true });
+
+  // Verify enabled is false after disconnect
+  list = (await (await fetch(new Request("http://localhost/api/extensions"))).json()) as {
+    extensions: { status: string; enabled: boolean }[];
+  };
+  expect(list.extensions[0]?.status).toBe("not_connected");
+  expect(list.extensions[0]?.enabled).toBe(false);
+});
+
 test("an unknown extension id is a 404, not a vault call", async () => {
   const { fetch } = await setup();
   expect(
