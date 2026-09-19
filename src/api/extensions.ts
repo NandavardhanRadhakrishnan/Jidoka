@@ -1,13 +1,22 @@
 import { Hono } from "hono";
 import type { Database } from "bun:sqlite";
+import { mkdtemp, mkdir, copyFile, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import * as extensionsRepo from "../repo/extensions";
 import { discoverExtensions } from "../extensions/discovery";
+import { generateExtension, type GeneratedExtension } from "../extensions/generator";
 import { AuthPendingError, type Vault } from "../vault/vault";
+import type { AgentRunner } from "../agent/runner";
+import type { ToolSpec } from "../ai/provider";
+import type { ExtensionManifest } from "../domain/extension";
 
 export interface ExtensionRoutesDeps {
   db: Database;
   vault: Vault;
   extensionsDir: string;
+  runAgent: AgentRunner;
+  listTools: () => ToolSpec[];
 }
 
 function escapeHtml(value: string): string {
@@ -24,8 +33,41 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+interface PendingGeneration {
+  tempDir: string;
+  manifest: ExtensionManifest;
+  mode: "create" | "fix";
+  targetId: string;
+}
+
 export function createExtensionRoutes(deps: ExtensionRoutesDeps): Hono {
   const app = new Hono();
+
+  const pending = new Map<string, PendingGeneration>();
+
+  function uniqueId(baseId: string): string {
+    const taken = new Set([
+      ...extensionsRepo.list(deps.db).map((r) => r.id),
+      ...[...pending.values()].map((p) => p.targetId),
+    ]);
+    if (!taken.has(baseId)) return baseId;
+    let n = 2;
+    while (taken.has(`${baseId}-${n}`)) n++;
+    return `${baseId}-${n}`;
+  }
+
+  async function stageDraft(
+    generated: GeneratedExtension,
+    mode: "create" | "fix",
+    targetId: string,
+  ): Promise<string> {
+    const tempDir = await mkdtemp(join(tmpdir(), "jidoka-ext-draft-"));
+    await writeFile(join(tempDir, "manifest.json"), JSON.stringify(generated.manifest, null, 2));
+    await writeFile(join(tempDir, "source.ts"), generated.source);
+    const generationId = crypto.randomUUID();
+    pending.set(generationId, { tempDir, manifest: generated.manifest, mode, targetId });
+    return generationId;
+  }
 
   function list() {
     return extensionsRepo.list(deps.db).map((record) => ({
@@ -50,6 +92,75 @@ export function createExtensionRoutes(deps: ExtensionRoutesDeps): Hono {
     } catch (error) {
       return c.json({ error: errorMessage(error) }, 500);
     }
+  });
+
+  app.post("/api/extensions/generate", async (c) => {
+    let body: { description?: string } | null;
+    try {
+      body = (await c.req.json()) as { description?: string };
+    } catch {
+      body = null;
+    }
+    if (!body?.description?.trim()) return c.json({ error: "description is required" }, 400);
+
+    try {
+      const allowedTools = deps.listTools().map((t) => t.name);
+      const generated = await generateExtension(
+        deps.runAgent,
+        { kind: "create", description: body.description },
+        allowedTools,
+      );
+      const targetId = uniqueId(generated.manifest.id);
+      const manifest = { ...generated.manifest, id: targetId };
+      const generationId = await stageDraft({ manifest, source: generated.source }, "create", targetId);
+
+      return c.json({ generationId, manifest });
+    } catch (error) {
+      return c.json({ error: errorMessage(error) }, 502);
+    }
+  });
+
+  app.post("/api/extensions/generate/:id/approve", async (c) => {
+    const generationId = c.req.param("id");
+    const entry = pending.get(generationId);
+    if (!entry) return c.json({ error: "unknown or expired generation" }, 404);
+
+    const targetDir = join(deps.extensionsDir, entry.targetId);
+
+    if (entry.mode === "create") {
+      const exists = await stat(targetDir)
+        .then(() => true)
+        .catch(() => false);
+      if (exists) {
+        return c.json({ error: `an extension named "${entry.targetId}" already exists` }, 409);
+      }
+    }
+
+    try {
+      await mkdir(targetDir, { recursive: true });
+      await copyFile(join(entry.tempDir, "manifest.json"), join(targetDir, "manifest.json"));
+      await copyFile(join(entry.tempDir, "source.ts"), join(targetDir, "source.ts"));
+    } catch (error) {
+      await rm(targetDir, { recursive: true, force: true });
+      return c.json({ error: errorMessage(error) }, 500);
+    }
+
+    await rm(entry.tempDir, { recursive: true, force: true });
+    pending.delete(generationId);
+    await discoverExtensions(deps.db, deps.extensionsDir);
+
+    return c.json({ extensionId: entry.targetId });
+  });
+
+  app.post("/api/extensions/generate/:id/discard", async (c) => {
+    const generationId = c.req.param("id");
+    const entry = pending.get(generationId);
+    if (!entry) return c.json({ error: "unknown or expired generation" }, 404);
+
+    await rm(entry.tempDir, { recursive: true, force: true });
+    pending.delete(generationId);
+
+    return c.json({ discarded: true });
   });
 
   app.post("/api/extensions/:id/connect/api-key", async (c) => {

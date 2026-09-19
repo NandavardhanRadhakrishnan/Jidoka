@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDb, migrate } from "../../src/db";
@@ -7,6 +7,7 @@ import { createVault } from "../../src/vault/vault";
 import { discoverExtensions } from "../../src/extensions/discovery";
 import { createExtensionRoutes } from "../../src/api/extensions";
 import type { HttpFetch } from "../../src/vault/deviceCode";
+import type { AgentRunner } from "../../src/agent/runner";
 
 async function freshDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), "jidoka-ext-routes-"));
@@ -18,12 +19,32 @@ async function writeManifest(dir: string, id: string, manifest: unknown): Promis
   await writeFile(join(folder, "manifest.json"), JSON.stringify(manifest));
 }
 
-async function setup(options: { fetch?: HttpFetch; now?: () => number } = {}) {
+async function setup(
+  options: {
+    fetch?: HttpFetch;
+    now?: () => number;
+    runAgent?: AgentRunner;
+    listTools?: () => { name: string; description: string; inputSchema: Record<string, unknown> }[];
+  } = {},
+) {
   const db = openDb(":memory:");
   migrate(db);
   const dir = await freshDir();
-  const vault = createVault({ db, ...options });
-  const app = createExtensionRoutes({ db, vault, extensionsDir: dir });
+  const vault = createVault({ db, fetch: options.fetch, now: options.now });
+  const runAgent: AgentRunner =
+    options.runAgent ?? {
+      id: "unused",
+      async run() {
+        throw new Error("runAgent should not be called in this test");
+      },
+    };
+  const app = createExtensionRoutes({
+    db,
+    vault,
+    extensionsDir: dir,
+    runAgent,
+    listTools: options.listTools ?? (() => []),
+  });
   return { db, dir, vault, fetch: async (req: Request) => app.fetch(req) };
 }
 
@@ -99,7 +120,18 @@ test("rescan returns a 500 with a JSON error when extensionsDir is not a directo
   const notADir = join(parent, "not-a-directory");
   await writeFile(notADir, "just a file");
   const vault = createVault({ db });
-  const app = createExtensionRoutes({ db, vault, extensionsDir: notADir });
+  const app = createExtensionRoutes({
+    db,
+    vault,
+    extensionsDir: notADir,
+    runAgent: {
+      id: "unused",
+      async run() {
+        throw new Error("runAgent should not be called in this test");
+      },
+    },
+    listTools: () => [],
+  });
 
   const response = await app.fetch(
     new Request("http://localhost/api/extensions/rescan", { method: "POST" }),
@@ -350,4 +382,208 @@ test("an unknown extension id is a 404, not a vault call", async () => {
   expect(
     (await fetch(new Request("http://localhost/api/extensions/ghost/enable", { method: "POST" }))).status,
   ).toBe(404);
+});
+
+function fencedReply(manifest: Record<string, unknown>, source: string): string {
+  return `\`\`\`json\n${JSON.stringify(manifest)}\n\`\`\`\n\`\`\`typescript\n${source}\n\`\`\``;
+}
+
+const demoManifest = {
+  id: "demo",
+  name: "Demo",
+  version: "1.0.0",
+  summary: "Reads demo items.",
+  readOnly: true,
+  auth: { mode: "api-key", label: "Token" },
+};
+
+const demoSource = `export function createSource(deps) {
+  return {
+    async poll(cursor) {
+      return { items: [], cursor };
+    },
+  };
+}`;
+
+test("generate stages a draft without touching extensionsDir until approved", async () => {
+  const runAgent: AgentRunner = {
+    id: "stub",
+    async run() {
+      return { text: fencedReply(demoManifest, demoSource), toolCalls: [] };
+    },
+  };
+  const { fetch } = await setup({ runAgent });
+
+  const response = await fetch(
+    new Request("http://localhost/api/extensions/generate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ description: "A demo integration" }),
+    }),
+  );
+
+  expect(response.status).toBe(200);
+  const body = (await response.json()) as { generationId: string; manifest: { id: string } };
+  expect(body.manifest.id).toBe("demo");
+  expect(body.generationId).toBeTruthy();
+
+  const list = (await (await fetch(new Request("http://localhost/api/extensions"))).json()) as {
+    extensions: unknown[];
+  };
+  expect(list.extensions).toEqual([]);
+});
+
+test("generate returns 502 when the model fails after retries", async () => {
+  const runAgent: AgentRunner = {
+    id: "stub",
+    async run() {
+      return { text: "nope", toolCalls: [] };
+    },
+  };
+  const { fetch } = await setup({ runAgent });
+
+  const response = await fetch(
+    new Request("http://localhost/api/extensions/generate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ description: "d" }),
+    }),
+  );
+
+  expect(response.status).toBe(502);
+});
+
+test("generate requires a non-empty description", async () => {
+  const { fetch } = await setup();
+  const response = await fetch(
+    new Request("http://localhost/api/extensions/generate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    }),
+  );
+  expect(response.status).toBe(400);
+});
+
+test("approve writes the draft into extensionsDir and it appears in the list", async () => {
+  const runAgent: AgentRunner = {
+    id: "stub",
+    async run() {
+      return { text: fencedReply(demoManifest, demoSource), toolCalls: [] };
+    },
+  };
+  const { fetch } = await setup({ runAgent });
+
+  const generated = (await (
+    await fetch(
+      new Request("http://localhost/api/extensions/generate", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ description: "d" }),
+      }),
+    )
+  ).json()) as { generationId: string };
+
+  const approved = await fetch(
+    new Request(`http://localhost/api/extensions/generate/${generated.generationId}/approve`, {
+      method: "POST",
+    }),
+  );
+  expect(approved.status).toBe(200);
+  expect(await approved.json()).toEqual({ extensionId: "demo" });
+
+  const list = (await (await fetch(new Request("http://localhost/api/extensions"))).json()) as {
+    extensions: { id: string }[];
+  };
+  expect(list.extensions.map((e) => e.id)).toEqual(["demo"]);
+});
+
+test("generate auto-suffixes a colliding id", async () => {
+  const runAgent: AgentRunner = {
+    id: "stub",
+    async run() {
+      return { text: fencedReply({ ...demoManifest, id: "notion" }, demoSource), toolCalls: [] };
+    },
+  };
+  const { fetch, dir, db } = await setup({ runAgent });
+  await writeManifest(dir, "notion", apiKeyManifest);
+  await discoverExtensions(db, dir);
+
+  const generated = (await (
+    await fetch(
+      new Request("http://localhost/api/extensions/generate", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ description: "d" }),
+      }),
+    )
+  ).json()) as { manifest: { id: string } };
+
+  expect(generated.manifest.id).toBe("notion-2");
+});
+
+test("approve is rejected if a colliding folder appeared after generation", async () => {
+  const runAgent: AgentRunner = {
+    id: "stub",
+    async run() {
+      return { text: fencedReply(demoManifest, demoSource), toolCalls: [] };
+    },
+  };
+  const { fetch, dir, db } = await setup({ runAgent });
+
+  const generated = (await (
+    await fetch(
+      new Request("http://localhost/api/extensions/generate", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ description: "d" }),
+      }),
+    )
+  ).json()) as { generationId: string };
+
+  // Simulate a collision appearing after generation but before approval —
+  // approve's check is a bare filesystem stat(), so it's enough that the
+  // folder exists; discovery doesn't need to run over it.
+  await writeManifest(dir, "demo", demoManifest);
+
+  const approved = await fetch(
+    new Request(`http://localhost/api/extensions/generate/${generated.generationId}/approve`, {
+      method: "POST",
+    }),
+  );
+  expect(approved.status).toBe(409);
+});
+
+test("discard removes the staged draft and a later approve 404s", async () => {
+  const runAgent: AgentRunner = {
+    id: "stub",
+    async run() {
+      return { text: fencedReply(demoManifest, demoSource), toolCalls: [] };
+    },
+  };
+  const { fetch } = await setup({ runAgent });
+
+  const generated = (await (
+    await fetch(
+      new Request("http://localhost/api/extensions/generate", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ description: "d" }),
+      }),
+    )
+  ).json()) as { generationId: string };
+
+  const discarded = await fetch(
+    new Request(`http://localhost/api/extensions/generate/${generated.generationId}/discard`, {
+      method: "POST",
+    }),
+  );
+  expect(await discarded.json()).toEqual({ discarded: true });
+
+  const approveAfterDiscard = await fetch(
+    new Request(`http://localhost/api/extensions/generate/${generated.generationId}/approve`, {
+      method: "POST",
+    }),
+  );
+  expect(approveAfterDiscard.status).toBe(404);
 });

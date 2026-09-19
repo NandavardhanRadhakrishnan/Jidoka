@@ -86,7 +86,13 @@ export function createApp(config: Config): App {
   );
   extraRoutes.route(
     "/",
-    createExtensionRoutes({ db, vault, extensionsDir: config.extensionsDir }),
+    createExtensionRoutes({
+      db,
+      vault,
+      extensionsDir: config.extensionsDir,
+      runAgent,
+      listTools: () => mcp.listTools(),
+    }),
   );
 
   const api = createServer(deps, extraRoutes);
