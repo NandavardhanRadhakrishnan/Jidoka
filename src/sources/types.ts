@@ -15,3 +15,8 @@ export interface TaskSource {
   readonly id: string;
   poll(cursor: string | null): Promise<PollResult>;
 }
+
+/** What an extension's source.ts receives to authenticate — nothing else. */
+export interface ExtensionSourceDeps {
+  getToken(): Promise<string>;
+}
