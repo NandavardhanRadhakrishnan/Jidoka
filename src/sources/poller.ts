@@ -45,30 +45,59 @@ export function startPoller(
   let running = false;
 
   const tick = async () => {
-    if (running) return;
+    if (running) {
+      console.warn("[poller] previous tick still running — skipping");
+      return;
+    }
     running = true;
 
-    let dynamicSources: TaskSource[] = [];
-    if (loadDynamicSources) {
-      try {
-        dynamicSources = await loadDynamicSources();
-      } catch (error) {
-        console.error("[poller] loadDynamicSources failed:", error);
+    try {
+      let dynamicSources: TaskSource[] = [];
+      if (loadDynamicSources) {
+        try {
+          dynamicSources = await loadDynamicSources();
+        } catch (error) {
+          console.error("[poller] loadDynamicSources failed:", error);
+        }
       }
-    }
 
-    for (const source of [...sources, ...dynamicSources]) {
-      try {
-        await pollOnce(db, source, onTask);
-      } catch (error) {
-        console.error(`[poller] ${source.id} failed:`, error);
+      const staticIds = new Set(sources.map((source) => source.id));
+      const uniqueDynamicSources = dynamicSources.filter((source) => {
+        if (staticIds.has(source.id)) {
+          console.error(
+            `[poller] ignoring dynamic source "${source.id}": id collides with a static source`,
+          );
+          return false;
+        }
+        return true;
+      });
+
+      for (const source of [...sources, ...uniqueDynamicSources]) {
+        try {
+          await pollOnce(db, source, onTask);
+        } catch (error) {
+          console.error(`[poller] ${source.id} failed:`, error);
+        }
       }
+    } finally {
+      running = false;
     }
-    running = false;
   };
 
-  void tick();
-  const timer = setInterval(() => void tick(), intervalMs);
+  // tick() can still reject (e.g. if a caller-supplied loadDynamicSources
+  // resolves to something other than an array — TypeScript prevents this,
+  // but loadDynamicSources is a public parameter so we don't rely on that).
+  // `running` is always reset via the `finally` above regardless, but
+  // firing tick() with a bare `void` would otherwise leave that rejection
+  // unhandled and able to crash the process; log it instead.
+  const safeTick = () => {
+    void tick().catch((error) => {
+      console.error("[poller] tick failed unexpectedly:", error);
+    });
+  };
+
+  safeTick();
+  const timer = setInterval(safeTick, intervalMs);
   return {
     stop() {
       clearInterval(timer);

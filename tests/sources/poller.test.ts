@@ -143,3 +143,166 @@ test("a failing loadDynamicSources does not stop the static sources from polling
 
   expect(task.title).toBe("Static");
 });
+
+test("a well-behaved static source still gets ingested even when a dynamic source hangs in the same tick", async () => {
+  // Sources are merged as [...sources, ...dynamicSources] and polled
+  // sequentially, so a source that never resolves only ever blocks sources
+  // that come *after* it in that same tick — it can't undo work already
+  // done for sources processed earlier. This is a baseline sanity check,
+  // not itself a regression test for the `finally` fix (see Finding 1 test
+  // below for that).
+  const db = freshDb();
+  const staticSource: TaskSource = {
+    id: "static",
+    async poll() {
+      return { items: [{ externalId: "s1", title: "Static", body: "" }], cursor: "static-cursor" };
+    },
+  };
+  const hangingDynamicSource: TaskSource = {
+    id: "hanging",
+    poll() {
+      return new Promise(() => {});
+    },
+  };
+
+  let resolveSeen!: (task: Task) => void;
+  const seenPromise = new Promise<Task>((resolve) => {
+    resolveSeen = resolve;
+  });
+
+  const poller = startPoller(
+    db,
+    [staticSource],
+    async (task) => {
+      resolveSeen(task);
+    },
+    60_000,
+    async () => [hangingDynamicSource],
+  );
+
+  const task = await seenPromise;
+  poller.stop();
+
+  expect(task.title).toBe("Static");
+});
+
+test("running resets even after a tick throws outside the per-source loop, so the next tick still polls (regression for the finally fix)", async () => {
+  // TypeScript's types stop a real caller from passing a loadDynamicSources
+  // that resolves to a non-array, but startPoller must not corrupt its
+  // internal `running` flag even if one ever did (it's a public parameter).
+  // Before the fix, `[...sources, ...dynamicSources]` (now
+  // `...uniqueDynamicSources`, but the same hazard applies to the filter
+  // call on a non-array) would throw *outside* any try/catch, and because
+  // `running = false` only ran on the successful-completion path, `running`
+  // would stay stuck at `true` forever — every later tick's
+  // `if (running) return;` would then silently skip polling the
+  // well-behaved static source too.
+  //
+  // Only the first tick's loader misbehaves; if `running` is correctly
+  // reset in the `finally`, the second tick (fired via a short intervalMs)
+  // proceeds normally and ingests the static source's second item.
+  const db = freshDb();
+  let call = 0;
+  const staticSource: TaskSource = {
+    id: "static",
+    async poll() {
+      const n = ++call;
+      return {
+        items: [{ externalId: `s${n}`, title: `Static ${n}`, body: "" }],
+        cursor: `static-cursor-${n}`,
+      };
+    },
+  };
+
+  let loadCall = 0;
+  const seenTitles: string[] = [];
+  let resolveFirst!: () => void;
+  let resolveSecond!: () => void;
+  const firstSeen = new Promise<void>((resolve) => {
+    resolveFirst = resolve;
+  });
+  const secondSeen = new Promise<void>((resolve) => {
+    resolveSecond = resolve;
+  });
+
+  const poller = startPoller(
+    db,
+    [staticSource],
+    async (task) => {
+      seenTitles.push(task.title);
+      if (seenTitles.length === 1) resolveFirst();
+      if (seenTitles.length === 2) resolveSecond();
+    },
+    50,
+    async () => {
+      loadCall++;
+      return (loadCall === 1 ? {} : []) as unknown as TaskSource[];
+    },
+  );
+
+  await firstSeen;
+  await secondSeen;
+  poller.stop();
+
+  // Tick 1's dynamicSources.filter call throws before the static source is
+  // ever polled (it never gets a "Static 0"), so the first two items
+  // actually ingested come from ticks 2 and 3 — proving `running` was
+  // reset after tick 1's error and both later ticks ran normally.
+  expect(seenTitles).toEqual(["Static 1", "Static 2"]);
+});
+
+test("startPoller ignores a dynamic source whose id collides with a static source", async () => {
+  const db = freshDb();
+  const staticSource: TaskSource = {
+    id: "outlook",
+    async poll() {
+      return {
+        items: [{ externalId: "static-item", title: "Static Outlook", body: "" }],
+        cursor: "static-cursor",
+      };
+    },
+  };
+  let dynamicPollCalls = 0;
+  const dynamicSource: TaskSource = {
+    id: "outlook",
+    async poll() {
+      dynamicPollCalls++;
+      return {
+        items: [{ externalId: "dynamic-item", title: "Dynamic Outlook", body: "" }],
+        cursor: "dynamic-cursor",
+      };
+    },
+  };
+
+  const seen: Task[] = [];
+  let resolveSeen!: (task: Task) => void;
+  const seenPromise = new Promise<Task>((resolve) => {
+    resolveSeen = resolve;
+  });
+
+  const poller = startPoller(
+    db,
+    [staticSource],
+    async (task) => {
+      seen.push(task);
+      resolveSeen(task);
+    },
+    60_000,
+    async () => [dynamicSource],
+  );
+
+  await seenPromise;
+  // The static and dynamic sources are polled sequentially within the same
+  // tick, so if the collision guard failed to filter the dynamic source out,
+  // its poll() (and a second onTask call for "dynamic-item") would run
+  // immediately after the static source's, well within this tick and before
+  // the 60s interval ever fires again. Flush pending microtasks/macrotasks
+  // so a wrongly-included dynamic poll has had its chance to run before we
+  // assert its absence.
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  poller.stop();
+
+  expect(dynamicPollCalls).toBe(0);
+  expect(seen.map((t) => t.title)).toEqual(["Static Outlook"]);
+  expect(getCursor(db, "outlook")).toBe("static-cursor");
+});
