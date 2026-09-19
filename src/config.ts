@@ -30,6 +30,8 @@ export interface Config {
   };
   /** Folder polled by the sample source; unset disables it. */
   sampleDir?: string;
+  /** Folder scanned for extension manifests. Always on — a missing/empty directory is a no-op. */
+  extensionsDir: string;
   /**
    * Launcher for handoff commands, with {{command}} substituted. Unset means
    * commands can only be copied, never launched by the server.
@@ -76,6 +78,7 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
       tenant: env.JIDOKA_OUTLOOK_TENANT ?? "common",
     },
     sampleDir: env.JIDOKA_SAMPLE_DIR,
+    extensionsDir: env.JIDOKA_EXTENSIONS_DIR ?? "./extensions",
     terminalCommand: env.JIDOKA_TERMINAL,
     agent: {
       // Model calls on the CLI imply agent steps on the CLI too, unless overridden.

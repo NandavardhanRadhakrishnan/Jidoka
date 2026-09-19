@@ -8,6 +8,7 @@ test("createApp wires the API and serves an empty board", async () => {
     pollIntervalMs: 60_000,
     ai: { provider: "anthropic", apiKey: "test-key" },
     outlook: { tenant: "common" },
+    extensionsDir: "./does-not-exist-in-tests",
     agent: { runner: "in-process", concurrency: 2 },
     oauth: {},
     mcpServers: [],
@@ -31,6 +32,7 @@ test("the served routes send /api to the API and everything else to the page", a
     pollIntervalMs: 60_000,
     ai: { provider: "anthropic", apiKey: "test-key" },
     outlook: { tenant: "common" },
+    extensionsDir: "./does-not-exist-in-tests",
     agent: { runner: "in-process", concurrency: 2 },
     oauth: {},
     mcpServers: [],
@@ -49,4 +51,24 @@ test("the served routes send /api to the API and everything else to the page", a
     await server.stop(true);
     await app.close();
   }
+});
+
+test("the extension routes are mounted and reachable through createApp", async () => {
+  const app = createApp({
+    dbPath: ":memory:",
+    port: 0,
+    pollIntervalMs: 60_000,
+    ai: { provider: "anthropic", apiKey: "test-key" },
+    outlook: { tenant: "common" },
+    extensionsDir: "./does-not-exist-in-tests",
+    agent: { runner: "in-process", concurrency: 2 },
+    oauth: {},
+    mcpServers: [],
+  });
+
+  const response = await app.fetch(new Request("http://localhost/api/extensions"));
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({ extensions: [] });
+
+  await app.close();
 });

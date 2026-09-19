@@ -6,6 +6,9 @@ import { McpManager } from "./mcp/manager";
 import { createServer } from "./api/server";
 import { createAuthRoutes, getValidAccessToken } from "./api/auth";
 import { createHandoffRoutes } from "./api/handoff";
+import { createVault } from "./vault/vault";
+import { createExtensionRoutes } from "./api/extensions";
+import { discoverExtensions } from "./extensions/discovery";
 import { createInProcessRunner, type AgentRunner } from "./agent/runner";
 import { createAgentSdkRunner } from "./agent/claudeAgentSdk";
 import { withConcurrencyLimit } from "./agent/limit";
@@ -69,6 +72,8 @@ export function createApp(config: Config): App {
     },
   };
 
+  const vault = createVault({ db });
+
   const extraRoutes = createAuthRoutes(authDeps);
   extraRoutes.route(
     "/",
@@ -76,6 +81,10 @@ export function createApp(config: Config): App {
       db,
       ...(config.terminalCommand ? { terminalCommand: config.terminalCommand } : {}),
     }),
+  );
+  extraRoutes.route(
+    "/",
+    createExtensionRoutes({ db, vault, extensionsDir: config.extensionsDir }),
   );
 
   const api = createServer(deps, extraRoutes);
@@ -143,6 +152,12 @@ if (import.meta.main) {
         `, max ${config.agent.concurrency} at a time`,
     );
     await app.mcp.connectAll(config.mcpServers);
+
+    const discovered = await discoverExtensions(app.deps.db, config.extensionsDir);
+    console.log(
+      `${discovered.valid.length} extension(s) discovered` +
+        (discovered.invalid.length ? ` (${discovered.invalid.length} invalid)` : ""),
+    );
 
     const sources: TaskSource[] = [];
     if (config.outlook.clientId) {
