@@ -7,6 +7,7 @@ import { Onboarding } from "./Onboarding";
 import { NewTask } from "./NewTask";
 import { SignIn } from "./SignIn";
 import { TaskDetail } from "./TaskDetail";
+import { Extensions } from "./Extensions";
 
 export function App() {
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -33,6 +34,7 @@ export function App() {
         <h1>Jidoka</h1>
         <div className="actions">
           <SignIn />
+          <Extensions />
           <NewTask onCreated={refresh} />
           <button onClick={() => void refresh()}>Refresh</button>
         </div>

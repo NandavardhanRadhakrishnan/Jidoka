@@ -1,6 +1,7 @@
 import type { Task } from "../domain/task";
 import type { TaskType } from "../domain/taskType";
 import type { Pipeline } from "../domain/pipeline";
+import type { ExtensionAuth } from "../domain/extension";
 
 export type HandoffTarget =
   | { kind: "url"; label: string; url: string }
@@ -18,6 +19,18 @@ export interface AuthProviderStatus {
 export interface TypeWithPipelines extends TaskType {
   activePipelineId: string | null;
   pipelines: { id: string; version: number; status: string }[];
+}
+
+export interface ExtensionListItem {
+  id: string;
+  name: string;
+  summary: string;
+  readOnly: boolean;
+  auth: ExtensionAuth;
+  enabled: boolean;
+  valid: boolean;
+  error: string | null;
+  status: "connected" | "not_connected" | "needs_reauth" | "unknown" | "invalid";
 }
 
 async function json<T>(input: string, init?: RequestInit): Promise<T> {
@@ -83,4 +96,34 @@ export const api = {
     json<{ pipeline: Pipeline }>(`/api/pipelines/${pipelineId}/activate`, { method: "POST" }).then(
       (r) => r.pipeline,
     ),
+  extensions: () => json<{ extensions: ExtensionListItem[] }>("/api/extensions").then((r) => r.extensions),
+  rescanExtensions: () =>
+    json<{ discovered: { valid: string[]; invalid: { id: string; error: string }[] } }>(
+      "/api/extensions/rescan",
+      { method: "POST" },
+    ),
+  connectApiKey: (id: string, apiKey: string) =>
+    json<{ connected: true }>(`/api/extensions/${id}/connect/api-key`, {
+      method: "POST",
+      body: JSON.stringify({ apiKey }),
+    }),
+  startDeviceConnect: (id: string) =>
+    json<{
+      userCode: string;
+      verificationUri: string;
+      deviceCode: string;
+      expiresIn: number;
+      interval: number;
+    }>(`/api/extensions/${id}/connect/device/start`, { method: "POST" }),
+  completeDeviceConnect: (id: string, deviceCode: string) =>
+    json<{ connected?: true; pending?: true }>(`/api/extensions/${id}/connect/device/complete`, {
+      method: "POST",
+      body: JSON.stringify({ deviceCode }),
+    }),
+  disconnectExtension: (id: string) =>
+    json<{ disconnected: true }>(`/api/extensions/${id}/disconnect`, { method: "POST" }),
+  enableExtension: (id: string) =>
+    json<{ enabled: true }>(`/api/extensions/${id}/enable`, { method: "POST" }),
+  disableExtension: (id: string) =>
+    json<{ enabled: false }>(`/api/extensions/${id}/disable`, { method: "POST" }),
 };
