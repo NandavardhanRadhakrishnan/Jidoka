@@ -24,7 +24,7 @@ export async function loadEnabledExtensionSources(
         continue;
       }
       const source = mod.createSource({ getToken: () => vault.getToken(record.id) });
-      sources.push({ id: record.id, poll: source.poll });
+      sources.push({ id: record.id, poll: source.poll.bind(source) });
     } catch (error) {
       console.error(`[extensions] failed to load source for ${record.id}:`, error);
     }

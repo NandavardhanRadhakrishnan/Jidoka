@@ -143,3 +143,32 @@ test("a createSource that throws is skipped, and a good extension alongside it s
 
   expect(sources.map((s) => s.id)).toEqual(["good2"]);
 });
+
+test("a source's poll method is bound correctly to the original source object so this-based implementations work", async () => {
+  const db = freshDb();
+  const dir = await freshDir();
+  extensions.upsertValid(db, manifest("bound"));
+  extensions.setEnabled(db, "bound", true);
+  await writeSource(
+    dir,
+    "bound",
+    `export function createSource() {
+      return {
+        id: "unused",
+        label: "bound-correctly",
+        async poll() {
+          return { items: [{ externalId: "1", title: this.label, body: "" }], cursor: null };
+        },
+      };
+    }`,
+  );
+  const vault = createVault({ db });
+
+  const sources = await loadEnabledExtensionSources(db, dir, vault);
+
+  expect(sources).toHaveLength(1);
+  expect(sources[0]?.id).toBe("bound");
+  const result = await sources[0]!.poll(null);
+  expect(result.items).toEqual([{ externalId: "1", title: "bound-correctly", body: "" }]);
+  expect(result.cursor).toBeNull();
+});
