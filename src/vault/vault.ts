@@ -77,7 +77,10 @@ export class Vault {
     };
   }
 
-  status(extensionId: string): CredentialStatus {
+  status(extensionId: string): CredentialStatus | "unknown" | "invalid" {
+    const record = extensionsRepo.get(this.deps.db, extensionId);
+    if (!record) return "unknown";
+    if (!record.valid || !record.auth) return "invalid";
     return credentialsRepo.load(this.deps.db, extensionId)?.status ?? "not_connected";
   }
 
@@ -168,7 +171,9 @@ export class Vault {
   async getToken(extensionId: string): Promise<string> {
     const { auth } = this.requireExtension(extensionId);
     const stored = credentialsRepo.load(this.deps.db, extensionId);
-    if (!stored) throw new Error(`extension "${extensionId}" is not connected`);
+    if (!stored || stored.authMode !== auth.mode) {
+      throw new Error(`extension "${extensionId}" is not connected`);
+    }
 
     if (auth.mode === "api-key") {
       return String(stored.payload.apiKey);

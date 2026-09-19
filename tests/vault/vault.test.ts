@@ -116,6 +116,35 @@ test("getToken refreshes an expired oauth token and persists the new one", async
   });
 });
 
+test("getToken refreshes an expired oauth token stored under device-code mode and persists the new one", async () => {
+  const db = freshDb();
+  extensions.upsertValid(db, deviceCodeManifest);
+  credentials.save(
+    db,
+    "outlook2",
+    "oauth2-device-code",
+    { accessToken: "at-1", refreshToken: "rt-1", expiresAt: 1_000 },
+    "connected",
+    0,
+  );
+  const fakeFetch: HttpFetch = async (_input, init) => {
+    const body = new URLSearchParams(String(init?.body));
+    expect(body.get("grant_type")).toBe("refresh_token");
+    expect(body.get("refresh_token")).toBe("rt-1");
+    return jsonResponse({ access_token: "at-2", refresh_token: "rt-2", expires_in: 3600 });
+  };
+  const vault = createVault({ db, now: () => 1_000_000, fetch: fakeFetch });
+
+  const token = await vault.getToken("outlook2");
+
+  expect(token).toBe("at-2");
+  expect(credentials.load(db, "outlook2")?.payload).toEqual({
+    accessToken: "at-2",
+    refreshToken: "rt-2",
+    expiresAt: 1_000_000 + 3600 * 1000,
+  });
+});
+
 test("getToken flips status to needs_reauth and rethrows when refresh fails", async () => {
   const db = freshDb();
   extensions.upsertValid(db, pkceManifest);
@@ -227,6 +256,18 @@ test("calling a device-code method against a PKCE extension is rejected", async 
   const vault = createVault({ db });
 
   await expect(vault.startDeviceConnect("slack")).rejects.toThrow(/does not use device-code/);
+});
+
+test("getToken rejects a stored credential whose auth mode no longer matches the manifest", async () => {
+  const db = freshDb();
+  extensions.upsertValid(db, apiKeyManifest);
+  credentials.save(db, "notion", "api-key", { apiKey: "secret-key" }, "connected", 0);
+
+  // Manifest is re-discovered with a different auth mode than the stored credential.
+  extensions.upsertValid(db, { ...apiKeyManifest, auth: pkceManifest.auth });
+  const vault = createVault({ db });
+
+  await expect(vault.getToken("notion")).rejects.toThrow(/not connected/);
 });
 
 test("disconnect removes the credential and status reverts to not_connected", async () => {
