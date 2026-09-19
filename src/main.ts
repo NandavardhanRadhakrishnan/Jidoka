@@ -6,7 +6,7 @@ import { McpManager } from "./mcp/manager";
 import { createServer } from "./api/server";
 import { createAuthRoutes, getValidAccessToken } from "./api/auth";
 import { createHandoffRoutes } from "./api/handoff";
-import { createVault } from "./vault/vault";
+import { createVault, type Vault } from "./vault/vault";
 import { createExtensionRoutes } from "./api/extensions";
 import { discoverExtensions } from "./extensions/discovery";
 import { createInProcessRunner, type AgentRunner } from "./agent/runner";
@@ -17,6 +17,7 @@ import { startPoller } from "./sources/poller";
 import { createOutlookSource } from "./sources/outlook/source";
 import { createSampleFolderSource } from "./sources/sample/folder";
 import type { TaskSource } from "./sources/types";
+import { loadEnabledExtensionSources } from "./extensions/runtime";
 import {
   AuthPendingError,
   completeDeviceLogin,
@@ -26,6 +27,7 @@ import {
 export interface App {
   deps: AppDeps;
   mcp: McpManager;
+  vault: Vault;
   fetch(request: Request): Promise<Response>;
   close(): Promise<void>;
 }
@@ -92,6 +94,7 @@ export function createApp(config: Config): App {
   return {
     deps,
     mcp,
+    vault,
     fetch: async (request) => api.fetch(request),
     async close() {
       await mcp.close();
@@ -181,23 +184,23 @@ if (import.meta.main) {
       console.log(`Sample source watching ${config.sampleDir}`);
     }
 
-    if (sources.length) {
-      startPoller(
-        app.deps.db,
-        sources,
-        async (task) => {
-          try {
-            await onTaskIngested(app.deps, task);
-          } catch (error) {
-            console.error(`[orchestrator] task ${task.id} failed:`, error);
-          }
-        },
-        config.pollIntervalMs,
-      );
-    } else {
+    startPoller(
+      app.deps.db,
+      sources,
+      async (task) => {
+        try {
+          await onTaskIngested(app.deps, task);
+        } catch (error) {
+          console.error(`[orchestrator] task ${task.id} failed:`, error);
+        }
+      },
+      config.pollIntervalMs,
+      () => loadEnabledExtensionSources(app.deps.db, config.extensionsDir, app.vault),
+    );
+    if (!sources.length) {
       console.warn(
-        "No sources configured — set JIDOKA_OUTLOOK_CLIENT_ID or JIDOKA_SAMPLE_DIR, " +
-          "or add tasks from the board",
+        "No static sources configured — set JIDOKA_OUTLOOK_CLIENT_ID or JIDOKA_SAMPLE_DIR, " +
+          "install an extension, or add tasks from the board",
       );
     }
 

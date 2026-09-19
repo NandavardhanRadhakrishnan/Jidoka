@@ -72,3 +72,21 @@ test("the extension routes are mounted and reachable through createApp", async (
 
   await app.close();
 });
+
+test("createApp exposes a vault for the CLI entrypoint to wire into the poller", async () => {
+  const app = createApp({
+    dbPath: ":memory:",
+    port: 0,
+    pollIntervalMs: 60_000,
+    ai: { provider: "anthropic", apiKey: "test-key" },
+    outlook: { tenant: "common" },
+    extensionsDir: "./does-not-exist-in-tests",
+    agent: { runner: "in-process", concurrency: 2 },
+    oauth: {},
+    mcpServers: [],
+  });
+
+  expect(app.vault.status("nonexistent")).toBe("unknown");
+
+  await app.close();
+});
