@@ -40,13 +40,24 @@ export function startPoller(
   sources: TaskSource[],
   onTask: OnTask,
   intervalMs: number,
+  loadDynamicSources?: () => Promise<TaskSource[]>,
 ): { stop(): void } {
   let running = false;
 
   const tick = async () => {
     if (running) return;
     running = true;
-    for (const source of sources) {
+
+    let dynamicSources: TaskSource[] = [];
+    if (loadDynamicSources) {
+      try {
+        dynamicSources = await loadDynamicSources();
+      } catch (error) {
+        console.error("[poller] loadDynamicSources failed:", error);
+      }
+    }
+
+    for (const source of [...sources, ...dynamicSources]) {
       try {
         await pollOnce(db, source, onTask);
       } catch (error) {

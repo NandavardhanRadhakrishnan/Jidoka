@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
 import { openDb, migrate } from "../../src/db";
-import { pollOnce } from "../../src/sources/poller";
+import { pollOnce, startPoller } from "../../src/sources/poller";
 import { getCursor } from "../../src/repo/sourceState";
 import type { TaskSource, RawItem } from "../../src/sources/types";
 import type { Task } from "../../src/domain/task";
@@ -81,4 +81,65 @@ test("pollOnce keeps the old cursor when the source throws", async () => {
 
   await expect(pollOnce(db, source, async () => {})).rejects.toThrow("network down");
   expect(getCursor(db, "fake")).toBeNull();
+});
+
+test("startPoller merges a dynamic source's items into each tick", async () => {
+  const db = freshDb();
+  const dynamicSource: TaskSource = {
+    id: "dyn",
+    async poll() {
+      return { items: [{ externalId: "d1", title: "Dynamic", body: "" }], cursor: "dyn-cursor" };
+    },
+  };
+  let resolveSeen!: (task: Task) => void;
+  const seenPromise = new Promise<Task>((resolve) => {
+    resolveSeen = resolve;
+  });
+
+  const poller = startPoller(
+    db,
+    [],
+    async (task) => {
+      resolveSeen(task);
+    },
+    60_000,
+    async () => [dynamicSource],
+  );
+
+  const task = await seenPromise;
+  poller.stop();
+
+  expect(task.title).toBe("Dynamic");
+  expect(getCursor(db, "dyn")).toBe("dyn-cursor");
+});
+
+test("a failing loadDynamicSources does not stop the static sources from polling", async () => {
+  const db = freshDb();
+  const staticSource: TaskSource = {
+    id: "static",
+    async poll() {
+      return { items: [{ externalId: "s1", title: "Static", body: "" }], cursor: "static-cursor" };
+    },
+  };
+  let resolveSeen!: (task: Task) => void;
+  const seenPromise = new Promise<Task>((resolve) => {
+    resolveSeen = resolve;
+  });
+
+  const poller = startPoller(
+    db,
+    [staticSource],
+    async (task) => {
+      resolveSeen(task);
+    },
+    60_000,
+    async () => {
+      throw new Error("loader exploded");
+    },
+  );
+
+  const task = await seenPromise;
+  poller.stop();
+
+  expect(task.title).toBe("Static");
 });
