@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDb, migrate } from "../../src/db";
@@ -412,7 +412,7 @@ test("generate stages a draft without touching extensionsDir until approved", as
       return { text: fencedReply(demoManifest, demoSource), toolCalls: [] };
     },
   };
-  const { fetch } = await setup({ runAgent });
+  const { fetch, dir } = await setup({ runAgent });
 
   const response = await fetch(
     new Request("http://localhost/api/extensions/generate", {
@@ -426,6 +426,10 @@ test("generate stages a draft without touching extensionsDir until approved", as
   const body = (await response.json()) as { generationId: string; manifest: { id: string } };
   expect(body.manifest.id).toBe("demo");
   expect(body.generationId).toBeTruthy();
+
+  // Verify the real filesystem is untouched: stageDraft should only write to temp, not extensionsDir
+  const contents = await readdir(dir);
+  expect(contents).toEqual([]);
 
   const list = (await (await fetch(new Request("http://localhost/api/extensions"))).json()) as {
     extensions: unknown[];
