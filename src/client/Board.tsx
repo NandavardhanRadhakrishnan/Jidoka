@@ -15,10 +15,15 @@ export function Board({
       {COLUMNS.map((column) => (
         <section key={column.state} className="column">
           <h2>
+            <span className={`tone-dot tone-${column.tone}`} />
             {column.label} <span className="count">{grouped[column.state].length}</span>
           </h2>
           {grouped[column.state].map((task) => (
-            <article key={task.id} className="card" onClick={() => onSelect(task)}>
+            <article
+              key={task.id}
+              className={`card tone-${column.tone}`}
+              onClick={() => onSelect(task)}
+            >
               <h3>{task.title}</h3>
               <p>{task.body.slice(0, 120)}</p>
               <footer>{task.sourceId}</footer>

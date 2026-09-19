@@ -36,7 +36,9 @@ export function App() {
           <SignIn />
           <Extensions />
           <NewTask onCreated={refresh} />
-          <button onClick={() => void refresh()}>Refresh</button>
+          <button className="secondary" onClick={() => void refresh()}>
+            Refresh
+          </button>
         </div>
       </header>
 
