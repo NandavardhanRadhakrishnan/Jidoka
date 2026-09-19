@@ -1603,3 +1603,5 @@ Not built here — these depend on this plan's vault/discovery but are their own
 - Wiring an enabled extension's `source.ts` into `src/sources/poller.ts` (dynamic `import()` at runtime).
 - The HTTP routes an auth-code+PKCE redirect and a device-code polling UI need.
 - Matching an extension's `expectedMcpServer` against configured `mcpServers`.
+- **Persisting the manifest's `config` field.** `ExtensionManifestSchema` validates it, but nothing in this plan stores it — the `extensions` table has no column for it, because its only consumer (the wizard's Config step) isn't built yet. Add the column and the persistence path together with that step, not before there's something to put in it.
+- **Pruning extensions whose folder was deleted.** `discoverExtensions` only ever upserts; nothing removes an `extensions` row (or its `extension_credentials`, despite the `ON DELETE CASCADE`) when its folder disappears. An `enabled` row can outlive its folder indefinitely. The poller-wiring plan must handle this — either prune on discovery or have the dynamic `import()` path treat a missing `source.ts` as the same "goes to needs-attention" state as an invalid manifest.
