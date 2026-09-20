@@ -12,6 +12,26 @@ export interface ModelOption {
   blurb: string;
 }
 
+export interface EffectiveSettings {
+  ai: { provider: string; apiKeyConfigured: boolean; model?: string; baseUrl?: string };
+  agent: { runner: string; model?: string; concurrency: number; maxBudgetUsd?: number };
+  mcpServers: { name: string; command: string; args: string[] }[];
+  sampleDir?: string;
+  extensionsDir: string;
+  pollIntervalMs: number;
+  terminalCommand?: string;
+}
+
+export interface SettingsPatch {
+  ai?: { provider?: string; apiKey?: string; model?: string; baseUrl?: string };
+  agent?: { runner?: string; model?: string; concurrency?: number; maxBudgetUsd?: number };
+  mcpServers?: { name: string; command: string; args: string[] }[];
+  sampleDir?: string;
+  extensionsDir?: string;
+  pollIntervalMs?: number;
+  terminalCommand?: string;
+}
+
 export type HandoffTarget =
   | { kind: "url"; label: string; url: string }
   | { kind: "draft"; label: string; content: string }
@@ -178,4 +198,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ definition }),
     }).then((r) => r.rule),
+  settingsGet: () => json<{ settings: unknown; effective: EffectiveSettings }>("/api/settings"),
+  saveSettings: (patch: SettingsPatch) =>
+    json<{ settings: unknown; effective: EffectiveSettings }>("/api/settings", {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    }).then((r) => r.effective),
 };

@@ -9,6 +9,7 @@ import { SignIn } from "./SignIn";
 import { TaskDetail } from "./TaskDetail";
 import { Extensions } from "./Extensions";
 import { Rules } from "./Rules";
+import { Settings } from "./Settings";
 
 export function App() {
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -38,6 +39,7 @@ export function App() {
           <SignIn />
           <Rules />
           <Extensions />
+          <Settings />
           <NewTask onCreated={refresh} />
           <button className="secondary" onClick={() => void refresh()}>
             Refresh
