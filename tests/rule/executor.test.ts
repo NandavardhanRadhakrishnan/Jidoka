@@ -356,6 +356,80 @@ test("a rule that calls itself fails instead of looping", async () => {
   ).rejects.toThrow(/loop/i);
 });
 
+test("an ai step with a model set passes it to the provider", async () => {
+  const definition = RuleDefinitionSchema.parse({
+    steps: [
+      { id: "s1", type: "ai", prompt: "Summarize {{task.body}}", model: "claude-haiku-4-5-20251001", output: "summary" },
+      { id: "s2", type: "assign", to: "human" },
+    ],
+  });
+  const seenModels: (string | undefined)[] = [];
+  const provider = {
+    id: "stub",
+    async complete(req: { model?: string }) {
+      seenModels.push(req.model);
+      return { text: "done", toolCalls: [] };
+    },
+  };
+
+  await runRule({ provider, callTool: noTools, loadRule: noRules }, definition, task);
+
+  expect(seenModels).toEqual(["claude-haiku-4-5-20251001"]);
+});
+
+test("an ai step with no model set passes none", async () => {
+  const definition = RuleDefinitionSchema.parse({
+    steps: [
+      { id: "s1", type: "ai", prompt: "Summarize {{task.body}}", output: "summary" },
+      { id: "s2", type: "assign", to: "human" },
+    ],
+  });
+  const seenModels: (string | undefined)[] = [];
+  const provider = {
+    id: "stub",
+    async complete(req: { model?: string }) {
+      seenModels.push(req.model);
+      return { text: "done", toolCalls: [] };
+    },
+  };
+
+  await runRule({ provider, callTool: noTools, loadRule: noRules }, definition, task);
+
+  expect(seenModels).toEqual([undefined]);
+});
+
+test("an agent step with a model set passes it through the in-process runner", async () => {
+  const definition = RuleDefinitionSchema.parse({
+    steps: [
+      {
+        id: "s1",
+        type: "agent",
+        prompt: "Go",
+        tools: [],
+        model: "claude-opus-5",
+        output: "brief",
+      },
+      { id: "s2", type: "assign", to: "human" },
+    ],
+  });
+  const seenModels: (string | undefined)[] = [];
+  const provider = {
+    id: "stub",
+    async complete(req: { model?: string }) {
+      seenModels.push(req.model);
+      return { text: "done", toolCalls: [] };
+    },
+  };
+
+  await runRule(
+    { provider, callTool: noTools, loadRule: noRules, listTools: () => [] },
+    definition,
+    task,
+  );
+
+  expect(seenModels).toEqual(["claude-opus-5"]);
+});
+
 test("the schema rejects an unknown step type", () => {
   expect(() =>
     RuleDefinitionSchema.parse({ steps: [{ id: "x", type: "teleport" }] }),

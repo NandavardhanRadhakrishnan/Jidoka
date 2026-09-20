@@ -126,6 +126,7 @@ async function runSteps(
         const result = await deps.provider.complete({
           messages: [{ role: "user", content: renderTemplate(step.prompt, scope) }],
           maxTokens: 4000,
+          ...(step.model ? { model: step.model } : {}),
         });
         state.context[step.output] = result.text;
         state.log.push({ stepId: step.id, type: step.type, output: step.output });
@@ -146,6 +147,7 @@ async function runSteps(
             prompt: renderTemplate(step.prompt, scope),
             allowedTools: step.tools,
             maxTurns: step.maxIterations,
+            ...(step.model ? { model: step.model } : {}),
           });
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
