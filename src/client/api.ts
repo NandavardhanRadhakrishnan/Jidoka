@@ -1,7 +1,16 @@
 import type { Task } from "../domain/task";
 import type { TaskType } from "../domain/taskType";
-import type { Rule } from "../domain/rule";
+import type { Rule, RuleDefinition } from "../domain/rule";
 import type { ExtensionAuth } from "../domain/extension";
+import type { ToolSpec } from "../ai/provider";
+
+export type { Rule };
+
+export interface ModelOption {
+  id: string;
+  label: string;
+  blurb: string;
+}
 
 export type HandoffTarget =
   | { kind: "url"; label: string; url: string }
@@ -162,4 +171,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ error }),
     }),
+  models: () => json<{ provider: string; models: ModelOption[] }>("/api/models"),
+  mcpTools: () => json<{ tools: ToolSpec[] }>("/api/mcp/tools").then((r) => r.tools),
+  saveRule: (typeId: string, definition: RuleDefinition) =>
+    json<{ rule: Rule }>(`/api/types/${typeId}/rules`, {
+      method: "POST",
+      body: JSON.stringify({ definition }),
+    }).then((r) => r.rule),
 };
