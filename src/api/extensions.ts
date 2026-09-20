@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { Database } from "bun:sqlite";
-import { mkdtemp, mkdir, copyFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, copyFile, rm, stat, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as extensionsRepo from "../repo/extensions";
@@ -298,6 +298,41 @@ export function createExtensionRoutes(deps: ExtensionRoutesDeps): Hono {
     extensionsRepo.remove(deps.db, id);
     await rm(join(deps.extensionsDir, id), { recursive: true, force: true });
     return c.json({ deleted: true });
+  });
+
+  app.post("/api/extensions/:id/fix", async (c) => {
+    const id = c.req.param("id");
+    if (!extensionsRepo.get(deps.db, id)) return c.json({ error: "unknown extension" }, 404);
+    let body: { error?: string } | null;
+    try {
+      body = (await c.req.json()) as { error?: string };
+    } catch {
+      body = null;
+    }
+    if (!body?.error?.trim()) return c.json({ error: "error is required" }, 400);
+
+    let currentManifest: string;
+    let currentSource: string;
+    try {
+      currentManifest = await readFile(join(deps.extensionsDir, id, "manifest.json"), "utf8");
+      currentSource = await readFile(join(deps.extensionsDir, id, "source.ts"), "utf8");
+    } catch (error) {
+      return c.json({ error: `could not read current extension files: ${errorMessage(error)}` }, 500);
+    }
+
+    try {
+      const allowedTools = deps.listTools().map((t) => t.name);
+      const generated = await generateExtension(
+        deps.runAgent,
+        { kind: "fix", targetId: id, currentManifest, currentSource, error: body.error },
+        allowedTools,
+      );
+      const generationId = await stageDraft(generated, "fix", id);
+
+      return c.json({ generationId, manifest: generated.manifest });
+    } catch (error) {
+      return c.json({ error: errorMessage(error) }, 502);
+    }
   });
 
   return app;

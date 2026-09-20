@@ -682,3 +682,80 @@ test("delete of an unknown extension is a 404", async () => {
   );
   expect(response.status).toBe(404);
 });
+
+test("fix reads the current files and stages a corrected draft under the same id", async () => {
+  const fixedManifest = { ...apiKeyManifest, id: "renamed-by-model" };
+  const fixedSource = `export function createSource(deps) {
+    return { async poll(cursor) { return { items: [], cursor }; } };
+  }`;
+  const runAgent: AgentRunner = {
+    id: "stub",
+    async run() {
+      return { text: fencedReply(fixedManifest, fixedSource), toolCalls: [] };
+    },
+  };
+
+  const { fetch, dir, db } = await setup({ runAgent });
+  await writeManifest(dir, "notion", apiKeyManifest);
+  await mkdir(join(dir, "notion"), { recursive: true });
+  await writeFile(
+    join(dir, "notion", "source.ts"),
+    `export function createSource() { return { async poll() { throw new Error("bad url"); } }; }`,
+  );
+  await discoverExtensions(db, dir);
+
+  const response = await fetch(
+    new Request("http://localhost/api/extensions/notion/fix", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ error: "bad url" }),
+    }),
+  );
+  expect(response.status).toBe(200);
+  const body = (await response.json()) as { generationId: string; manifest: { id: string } };
+  expect(body.manifest.id).toBe("notion");
+
+  const approved = await fetch(
+    new Request(`http://localhost/api/extensions/generate/${body.generationId}/approve`, {
+      method: "POST",
+    }),
+  );
+  expect(approved.status).toBe(200);
+  expect(await approved.json()).toEqual({ extensionId: "notion" });
+
+  const sourceAfterFix = await readFile(join(dir, "notion", "source.ts"), "utf8");
+  expect(sourceAfterFix).toContain("cursor");
+  expect(sourceAfterFix).not.toContain("bad url");
+});
+
+test("fix requires a non-empty error", async () => {
+  const { fetch, dir, db } = await setup();
+  await writeManifest(dir, "notion", apiKeyManifest);
+  await mkdir(join(dir, "notion"), { recursive: true });
+  await writeFile(
+    join(dir, "notion", "source.ts"),
+    `export function createSource() { return { async poll() { return { items: [], cursor: null }; } }; }`,
+  );
+  await discoverExtensions(db, dir);
+
+  const response = await fetch(
+    new Request("http://localhost/api/extensions/notion/fix", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    }),
+  );
+  expect(response.status).toBe(400);
+});
+
+test("fix on an unknown extension is a 404", async () => {
+  const { fetch } = await setup();
+  const response = await fetch(
+    new Request("http://localhost/api/extensions/ghost/fix", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ error: "x" }),
+    }),
+  );
+  expect(response.status).toBe(404);
+});
