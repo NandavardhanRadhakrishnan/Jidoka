@@ -14,6 +14,7 @@ export interface AgentRunInput {
   /** Tools this run may use, as `<server>__<tool>`. Nothing else is permitted. */
   allowedTools: string[];
   maxTurns: number;
+  model?: string;
 }
 
 export interface AgentRunResult {
@@ -73,6 +74,7 @@ export function createInProcessRunner(deps: InProcessRunnerDeps): AgentRunner {
       for (let turn = 0; turn < input.maxTurns; turn++) {
         const result = await deps.provider.complete({
           ...(input.systemPrompt ? { system: input.systemPrompt } : {}),
+          ...(input.model ? { model: input.model } : {}),
           messages,
           tools: specs,
           maxTokens: 8000,

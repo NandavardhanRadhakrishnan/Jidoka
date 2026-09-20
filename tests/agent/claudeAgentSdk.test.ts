@@ -214,3 +214,18 @@ test("maxBudgetUsd and model are passed through when set", async () => {
   expect(captured?.options?.maxBudgetUsd).toBe(2.5);
   expect(captured?.options?.maxTurns).toBe(7);
 });
+
+test("a per-run model overrides the runner's configured default", async () => {
+  let captured: CapturedParams | undefined;
+  const runner = createAgentSdkRunner({
+    mcpServers: {},
+    model: "claude-sonnet-5",
+    queryFn: capturingQuery([successResult("done")], (params) => {
+      captured = params;
+    }),
+  });
+
+  await runner.run(baseInput({ model: "claude-opus-5" }));
+
+  expect(captured?.options?.model).toBe("claude-opus-5");
+});

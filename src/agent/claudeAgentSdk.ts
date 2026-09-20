@@ -139,7 +139,8 @@ export function createAgentSdkRunner(options: AgentSdkRunnerOptions): AgentRunne
         env,
       };
       if (input.systemPrompt) queryOptions.systemPrompt = input.systemPrompt;
-      if (options.model) queryOptions.model = options.model;
+      const model = input.model ?? options.model;
+      if (model) queryOptions.model = model;
       if (options.maxBudgetUsd !== undefined) queryOptions.maxBudgetUsd = options.maxBudgetUsd;
 
       let finalResult: SdkResultMessage | undefined;
