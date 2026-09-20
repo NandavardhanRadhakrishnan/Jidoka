@@ -1,5 +1,5 @@
 import index from "./client/index.html";
-import { loadConfig, type Config } from "./config";
+import { loadConfig, applySettings, type Config } from "./config";
 import { openDb, migrate } from "./db";
 import { createProvider, describeCredentials } from "./ai";
 import { McpManager } from "./mcp/manager";
@@ -18,6 +18,7 @@ import { createOutlookSource } from "./sources/outlook/source";
 import { createSampleFolderSource } from "./sources/sample/folder";
 import type { TaskSource } from "./sources/types";
 import { loadEnabledExtensionSources } from "./extensions/runtime";
+import { getSettings } from "./repo/settings";
 import {
   AuthPendingError,
   completeDeviceLogin,
@@ -28,13 +29,15 @@ export interface App {
   deps: AppDeps;
   mcp: McpManager;
   vault: Vault;
+  config: Config;
   fetch(request: Request): Promise<Response>;
   close(): Promise<void>;
 }
 
-export function createApp(config: Config): App {
-  const db = openDb(config.dbPath);
+export function createApp(baseConfig: Config): App {
+  const db = openDb(baseConfig.dbPath);
   migrate(db);
+  const config = applySettings(baseConfig, getSettings(db));
 
   const authDeps = { db, providers: config.oauth };
 
@@ -102,6 +105,7 @@ export function createApp(config: Config): App {
     deps,
     mcp,
     vault,
+    config,
     fetch: async (request) => api.fetch(request),
     async close() {
       await mcp.close();
@@ -153,42 +157,42 @@ if (import.meta.main) {
   } else {
     const app = createApp(config);
     console.log(
-      `AI provider: ${config.ai.provider} (${config.ai.model ?? "default model"}), ` +
-        `credentials: ${describeCredentials(config)}`,
+      `AI provider: ${app.config.ai.provider} (${app.config.ai.model ?? "default model"}), ` +
+        `credentials: ${describeCredentials(app.config)}`,
     );
     console.log(
-      `Agent steps: ${config.agent.runner}` +
-        (config.agent.runner === "agent-sdk" ? " (Claude Code CLI login)" : " (AiProvider)") +
-        `, max ${config.agent.concurrency} at a time`,
+      `Agent steps: ${app.config.agent.runner}` +
+        (app.config.agent.runner === "agent-sdk" ? " (Claude Code CLI login)" : " (AiProvider)") +
+        `, max ${app.config.agent.concurrency} at a time`,
     );
-    await app.mcp.connectAll(config.mcpServers);
+    await app.mcp.connectAll(app.config.mcpServers);
 
     try {
-      const discovered = await discoverExtensions(app.deps.db, config.extensionsDir);
+      const discovered = await discoverExtensions(app.deps.db, app.config.extensionsDir);
       console.log(
         `${discovered.valid.length} extension(s) discovered` +
           (discovered.invalid.length ? ` (${discovered.invalid.length} invalid)` : ""),
       );
     } catch (error) {
       console.warn(
-        `Extension discovery failed for "${config.extensionsDir}": ` +
+        `Extension discovery failed for "${app.config.extensionsDir}": ` +
           (error instanceof Error ? error.message : String(error)),
       );
     }
 
     const sources: TaskSource[] = [];
-    if (config.outlook.clientId) {
+    if (app.config.outlook.clientId) {
       sources.push(
         createOutlookSource({
           db: app.deps.db,
-          clientId: config.outlook.clientId,
-          tenant: config.outlook.tenant,
+          clientId: app.config.outlook.clientId,
+          tenant: app.config.outlook.tenant,
         }),
       );
     }
-    if (config.sampleDir) {
-      sources.push(createSampleFolderSource({ dir: config.sampleDir }));
-      console.log(`Sample source watching ${config.sampleDir}`);
+    if (app.config.sampleDir) {
+      sources.push(createSampleFolderSource({ dir: app.config.sampleDir }));
+      console.log(`Sample source watching ${app.config.sampleDir}`);
     }
 
     startPoller(
@@ -201,8 +205,8 @@ if (import.meta.main) {
           console.error(`[orchestrator] task ${task.id} failed:`, error);
         }
       },
-      config.pollIntervalMs,
-      () => loadEnabledExtensionSources(app.deps.db, config.extensionsDir, app.vault),
+      app.config.pollIntervalMs,
+      () => loadEnabledExtensionSources(app.deps.db, app.config.extensionsDir, app.vault),
     );
     if (!sources.length) {
       console.warn(
@@ -212,12 +216,12 @@ if (import.meta.main) {
     }
 
     Bun.serve({
-      port: config.port,
+      port: app.config.port,
       // Model calls keep a request open for a long time with no bytes flowing;
       // the default idle timeout closes such a connection mid-call.
       idleTimeout: 255,
       routes: createRoutes(app),
     });
-    console.log(`Jidoka on http://localhost:${config.port}`);
+    console.log(`Jidoka on http://localhost:${app.config.port}`);
   }
 }

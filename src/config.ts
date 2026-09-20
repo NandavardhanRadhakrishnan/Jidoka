@@ -1,6 +1,7 @@
 import { buildOAuthProviders } from "./auth/providers";
 import type { OAuthProviderConfig } from "./auth/oauth";
 import type { ModelProviderId } from "./ai/models";
+import type { Settings } from "./domain/settings";
 
 export interface McpServerConfig {
   name: string;
@@ -113,5 +114,18 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
     mcpServers: env.JIDOKA_MCP_SERVERS
       ? (JSON.parse(env.JIDOKA_MCP_SERVERS) as McpServerConfig[])
       : [],
+  };
+}
+
+export function applySettings(base: Config, settings: Settings): Config {
+  return {
+    ...base,
+    ai: { ...base.ai, ...settings.ai },
+    agent: { ...base.agent, ...settings.agent },
+    mcpServers: settings.mcpServers ?? base.mcpServers,
+    sampleDir: settings.sampleDir ?? base.sampleDir,
+    extensionsDir: settings.extensionsDir ?? base.extensionsDir,
+    pollIntervalMs: settings.pollIntervalMs ?? base.pollIntervalMs,
+    terminalCommand: settings.terminalCommand ?? base.terminalCommand,
   };
 }
