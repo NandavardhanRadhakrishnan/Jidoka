@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as extensionsRepo from "../repo/extensions";
 import { discoverExtensions } from "../extensions/discovery";
+import { loadOneExtensionSource } from "../extensions/runtime";
 import { generateExtension, type GeneratedExtension } from "../extensions/generator";
 import { AuthPendingError, type Vault } from "../vault/vault";
 import type { AgentRunner } from "../agent/runner";
@@ -273,6 +274,30 @@ export function createExtensionRoutes(deps: ExtensionRoutesDeps): Hono {
     if (!extensionsRepo.get(deps.db, id)) return c.json({ error: "unknown extension" }, 404);
     extensionsRepo.setEnabled(deps.db, id, false);
     return c.json({ enabled: false });
+  });
+
+  app.post("/api/extensions/:id/test-poll", async (c) => {
+    const id = c.req.param("id");
+    if (!extensionsRepo.get(deps.db, id)) return c.json({ error: "unknown extension" }, 404);
+    if (deps.vault.status(id) !== "connected") {
+      return c.json({ error: `extension "${id}" is not connected` }, 400);
+    }
+    try {
+      const source = await loadOneExtensionSource(deps.db, deps.extensionsDir, deps.vault, id);
+      const result = await source.poll(null);
+      return c.json({ itemCount: result.items.length, sample: result.items.slice(0, 3) });
+    } catch (error) {
+      return c.json({ error: errorMessage(error) }, 400);
+    }
+  });
+
+  app.post("/api/extensions/:id/delete", async (c) => {
+    const id = c.req.param("id");
+    if (!extensionsRepo.get(deps.db, id)) return c.json({ error: "unknown extension" }, 404);
+    deps.vault.disconnect(id);
+    extensionsRepo.remove(deps.db, id);
+    await rm(join(deps.extensionsDir, id), { recursive: true, force: true });
+    return c.json({ deleted: true });
   });
 
   return app;

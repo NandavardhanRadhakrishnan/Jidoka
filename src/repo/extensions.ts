@@ -93,3 +93,7 @@ export function list(db: Database): ExtensionRecord[] {
 export function setEnabled(db: Database, id: string, enabled: boolean): void {
   db.query("UPDATE extensions SET enabled = ? WHERE id = ?").run(enabled ? 1 : 0, id);
 }
+
+export function remove(db: Database, id: string): void {
+  db.query("DELETE FROM extensions WHERE id = ?").run(id);
+}

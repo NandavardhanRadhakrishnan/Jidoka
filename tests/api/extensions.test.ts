@@ -8,6 +8,8 @@ import { discoverExtensions } from "../../src/extensions/discovery";
 import { createExtensionRoutes } from "../../src/api/extensions";
 import type { HttpFetch } from "../../src/vault/deviceCode";
 import type { AgentRunner } from "../../src/agent/runner";
+import { getCursor } from "../../src/repo/sourceState";
+import { listTasks } from "../../src/repo/tasks";
 
 async function freshDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), "jidoka-ext-routes-"));
@@ -590,4 +592,93 @@ test("discard removes the staged draft and a later approve 404s", async () => {
     }),
   );
   expect(approveAfterDiscard.status).toBe(404);
+});
+
+test("test-poll runs poll() for real without creating tasks or storing a cursor", async () => {
+  const { fetch, dir, db } = await setup();
+  await writeManifest(dir, "notion", apiKeyManifest);
+  await mkdir(join(dir, "notion"), { recursive: true });
+  await writeFile(
+    join(dir, "notion", "source.ts"),
+    `export function createSource(deps) {
+      return {
+        async poll(cursor) {
+          const token = await deps.getToken();
+          return { items: [{ externalId: "1", title: "via " + token, body: "" }], cursor: "next" };
+        },
+      };
+    }`,
+  );
+  await discoverExtensions(db, dir);
+  await fetch(
+    new Request("http://localhost/api/extensions/notion/connect/api-key", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ apiKey: "secret" }),
+    }),
+  );
+
+  const response = await fetch(
+    new Request("http://localhost/api/extensions/notion/test-poll", { method: "POST" }),
+  );
+  expect(response.status).toBe(200);
+  const body = (await response.json()) as { itemCount: number; sample: { title: string }[] };
+  expect(body.itemCount).toBe(1);
+  expect(body.sample[0]?.title).toBe("via secret");
+
+  expect(getCursor(db, "notion")).toBeNull();
+  expect(listTasks(db)).toEqual([]);
+});
+
+test("test-poll surfaces a not-connected error without throwing", async () => {
+  const { fetch, dir, db } = await setup();
+  await writeManifest(dir, "notion", apiKeyManifest);
+  await mkdir(join(dir, "notion"), { recursive: true });
+  await writeFile(
+    join(dir, "notion", "source.ts"),
+    `export function createSource() { return { async poll() { return { items: [], cursor: null }; } }; }`,
+  );
+  await discoverExtensions(db, dir);
+
+  const response = await fetch(
+    new Request("http://localhost/api/extensions/notion/test-poll", { method: "POST" }),
+  );
+  expect(response.status).toBe(400);
+});
+
+test("delete removes the credential, the db row, and the on-disk folder", async () => {
+  const { fetch, dir, db } = await setup();
+  await writeManifest(dir, "notion", apiKeyManifest);
+  await discoverExtensions(db, dir);
+  await fetch(
+    new Request("http://localhost/api/extensions/notion/connect/api-key", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ apiKey: "k" }),
+    }),
+  );
+
+  const response = await fetch(
+    new Request("http://localhost/api/extensions/notion/delete", { method: "POST" }),
+  );
+  expect(await response.json()).toEqual({ deleted: true });
+
+  const afterDelete = (await (await fetch(new Request("http://localhost/api/extensions"))).json()) as {
+    extensions: { id: string }[];
+  };
+  expect(afterDelete.extensions).toEqual([]);
+
+  await discoverExtensions(db, dir);
+  const afterRescan = (await (await fetch(new Request("http://localhost/api/extensions"))).json()) as {
+    extensions: { id: string }[];
+  };
+  expect(afterRescan.extensions).toEqual([]);
+});
+
+test("delete of an unknown extension is a 404", async () => {
+  const { fetch } = await setup();
+  const response = await fetch(
+    new Request("http://localhost/api/extensions/ghost/delete", { method: "POST" }),
+  );
+  expect(response.status).toBe(404);
 });

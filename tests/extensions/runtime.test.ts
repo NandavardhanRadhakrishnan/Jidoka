@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { openDb, migrate } from "../../src/db";
 import * as extensions from "../../src/repo/extensions";
 import { createVault } from "../../src/vault/vault";
-import { loadEnabledExtensionSources } from "../../src/extensions/runtime";
+import { loadEnabledExtensionSources, loadOneExtensionSource } from "../../src/extensions/runtime";
 import type { ExtensionManifest } from "../../src/domain/extension";
 
 async function freshDir(): Promise<string> {
@@ -171,4 +171,32 @@ test("a source's poll method is bound correctly to the original source object so
   const result = await sources[0]!.poll(null);
   expect(result.items).toEqual([{ externalId: "1", title: "bound-correctly", body: "" }]);
   expect(result.cursor).toBeNull();
+});
+
+test("loadOneExtensionSource loads a single extension regardless of its enabled flag", async () => {
+  const db = freshDb();
+  const dir = await freshDir();
+  extensions.upsertValid(db, manifest("solo"));
+  // deliberately not enabled
+  await writeSource(
+    dir,
+    "solo",
+    `export function createSource() {
+      return { async poll() { return { items: [], cursor: "solo-cursor" }; } };
+    }`,
+  );
+  const vault = createVault({ db });
+
+  const source = await loadOneExtensionSource(db, dir, vault, "solo");
+
+  expect(source.id).toBe("solo");
+  expect((await source.poll(null)).cursor).toBe("solo-cursor");
+});
+
+test("loadOneExtensionSource throws for an unknown id", async () => {
+  const db = freshDb();
+  const dir = await freshDir();
+  const vault = createVault({ db });
+
+  await expect(loadOneExtensionSource(db, dir, vault, "ghost")).rejects.toThrow(/unknown extension/);
 });
