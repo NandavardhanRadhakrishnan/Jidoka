@@ -30,6 +30,7 @@ function deps(db: ReturnType<typeof freshDb>, replies: string[]): AppDeps {
   return {
     db,
     provider,
+    modelProvider: "anthropic",
     mcp: { listTools: () => [], callTool: async () => "" },
   };
 }

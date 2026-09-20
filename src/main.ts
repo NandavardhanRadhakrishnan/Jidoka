@@ -68,6 +68,7 @@ export function createApp(config: Config): App {
     db,
     runAgent,
     provider,
+    modelProvider: config.ai.provider,
     mcp: {
       listTools: () => mcp.listTools(),
       callTool: (server, tool, input) => mcp.callTool(server, tool, input),

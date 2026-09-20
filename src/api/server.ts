@@ -1,4 +1,5 @@
 import { Hono, type Context } from "hono";
+import { modelCatalog } from "../ai/models";
 import { findTaskBySource, getTask, insertTask, listTasks } from "../repo/tasks";
 import { getTaskType, listTaskTypes, mergeTaskType, updateTaskType } from "../repo/taskTypes";
 import { getActiveRule, getRule, listRules } from "../repo/rules";
@@ -27,6 +28,10 @@ export function createServer(deps: AppDeps, extraRoutes?: Hono): Hono {
   if (extraRoutes) app.route("/", extraRoutes);
 
   app.get("/api/tasks", (c) => c.json({ tasks: listTasks(deps.db) }));
+
+  app.get("/api/models", (c) =>
+    c.json({ provider: deps.modelProvider, models: modelCatalog(deps.modelProvider) }),
+  );
 
   // Inject a task by hand: the quickest way to exercise triage and rules
   // without waiting for a real source to poll.

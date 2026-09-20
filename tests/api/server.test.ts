@@ -16,7 +16,12 @@ function app(replies: string[] = []): { deps: AppDeps; fetch: (req: Request) => 
       return { text: replies[i++] ?? "", toolCalls: [] };
     },
   };
-  const deps: AppDeps = { db, provider, mcp: { listTools: () => [], callTool: async () => "" } };
+  const deps: AppDeps = {
+    db,
+    provider,
+    modelProvider: "anthropic",
+    mcp: { listTools: () => [], callTool: async () => "" },
+  };
   const server = createServer(deps);
   return { deps, fetch: async (req) => server.fetch(req) };
 }
@@ -244,4 +249,16 @@ test("a request for an unknown task returns 404", async () => {
   );
 
   expect(response.status).toBe(404);
+});
+
+test("GET /api/models returns the configured provider's catalog", async () => {
+  const { fetch } = app();
+
+  const body = (await (await fetch(new Request("http://localhost/api/models"))).json()) as {
+    provider: string;
+    models: { id: string; label: string }[];
+  };
+
+  expect(body.provider).toBe("anthropic");
+  expect(body.models.map((m) => m.id)).toContain("claude-sonnet-5");
 });

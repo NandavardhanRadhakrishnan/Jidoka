@@ -1,5 +1,6 @@
 import { buildOAuthProviders } from "./auth/providers";
 import type { OAuthProviderConfig } from "./auth/oauth";
+import type { ModelProviderId } from "./ai/models";
 
 export interface McpServerConfig {
   name: string;
@@ -16,7 +17,7 @@ export interface Config {
      * "agent-sdk" runs every model call through the Claude Code CLI, so the CLI's
      * own login (a subscription included) covers them and no API key is needed.
      */
-    provider: "anthropic" | "openai" | "agent-sdk";
+    provider: ModelProviderId;
     apiKey?: string;
     /** OAuth bearer token, used when no API key is set. */
     authToken?: string;

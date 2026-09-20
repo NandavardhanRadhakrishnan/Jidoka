@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { AiProvider, ToolSpec } from "./ai/provider";
+import type { ModelProviderId } from "./ai/models";
 import type { Task } from "./domain/task";
 import type { Rule } from "./domain/rule";
 import { getTask, listTasks, updateTask } from "./repo/tasks";
@@ -24,6 +25,7 @@ import { buildRule } from "./rule/builder";
 export interface AppDeps {
   db: Database;
   provider: AiProvider;
+  modelProvider: ModelProviderId;
   mcp: { listTools(): ToolSpec[]; callTool: ToolCaller };
   /** Backend for `agent` steps; the executor's in-process loop when unset. */
   runAgent?: AgentRunner;
