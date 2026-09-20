@@ -86,7 +86,7 @@ interface PendingGeneration {
 
 A "Generate" control in the Extensions panel next to Rescan, opening a description textarea. While the agent runs (tool calls can take a while), a busy state. On success: a draft review card — name/summary/`readOnly`/auth mode, Approve/Discard — kept visually separate from the installed list until approved (this reuses the manifest's existing `summary` field, added specifically for this kind of review in the vault plan). On failure, the error is shown with a chance to edit the description and retry.
 
-Two generic additions to every row's actions (Path A extensions benefit too, not just generated ones): once `status === "connected"`, a **Test** button appears next to Activate. Result shows inline — `✓ N items found` or `✗ <error>`. On failure, **Fix** (submits that error, lands back at the same draft-review card) and **Delete** (confirms, then removes the row) both appear.
+Two generic additions to every row's actions (Path A extensions benefit too, not just generated ones): once `status === "connected"`, a **Test** button appears next to Activate. Result shows inline — `✓ N items found` or `✗ <error>`. On failure, **Fix** appears (submits that error, lands back at the same draft-review card). **Delete** is unconditional on every row regardless of test status — there's no reason removing an extension should require first running a failed test, and it needs to be available for an extension that was never connected or tested at all.
 
 ## Testing
 
