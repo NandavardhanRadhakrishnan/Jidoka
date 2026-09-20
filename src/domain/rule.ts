@@ -6,6 +6,8 @@ const AiStep = z.object({
   id: z.string(),
   type: z.literal("ai"),
   prompt: z.string(),
+  /** Catalog id from src/ai/models.ts. Unset falls back to config.ai.model. */
+  model: z.string().optional(),
   output: z.string(),
 });
 
@@ -21,6 +23,8 @@ const AgentStep = z.object({
    */
   tools: z.array(z.string()).default([]),
   maxIterations: z.number().int().min(1).max(20).default(6),
+  /** Catalog id from src/ai/models.ts. Unset falls back to config.agent.model. */
+  model: z.string().optional(),
   output: z.string(),
 });
 

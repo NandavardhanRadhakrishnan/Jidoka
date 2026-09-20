@@ -1,4 +1,5 @@
 import type { AiProvider, ToolSpec } from "../ai/provider";
+import type { ModelOption } from "../ai/models";
 import {
   RuleDefinitionSchema,
   type RuleDefinition,
@@ -13,8 +14,8 @@ The rule runs automatically for every task of its type. Reply with JSON only:
 { "steps": [ ... ] }
 
 Step shapes:
-- { "id": "s1", "type": "ai", "prompt": "<prompt, may use {{task.title}}, {{task.body}}, {{task.metadata.<key>}}, {{context.<key>}}>", "output": "<context key>" }
-- { "id": "s1b", "type": "agent", "prompt": "<what to find out and what to produce>", "tools": ["<server>__<tool>", ...], "maxIterations": 6, "output": "<context key>" }
+- { "id": "s1", "type": "ai", "prompt": "<prompt, may use {{task.title}}, {{task.body}}, {{task.metadata.<key>}}, {{context.<key>}}>", "model": "<catalog id, or omit>", "output": "<context key>" }
+- { "id": "s1b", "type": "agent", "prompt": "<what to find out and what to produce>", "tools": ["<server>__<tool>", ...], "maxIterations": 6, "model": "<catalog id, or omit>", "output": "<context key>" }
   "tools" may be an empty list. A toolless agent step still runs a real session and leaves a conversation a human can resume from a handoff, which is what you want when no MCP tools are available.
 - { "id": "s2", "type": "mcp_tool", "server": "<server>", "tool": "<tool>", "input": { ... }, "output": "<context key>" }
 - { "id": "s3", "type": "branch", "on": "<context key>", "cases": { "<value>": [ ...steps ] }, "default": [ ...steps ] }
@@ -41,6 +42,7 @@ export interface BuildInput {
   type: TaskType;
   description: string;
   tools: ToolSpec[];
+  models: ModelOption[];
 }
 
 function toolCatalog(tools: ToolSpec[]): string {
@@ -55,6 +57,10 @@ function toolCatalog(tools: ToolSpec[]): string {
     .join("\n");
 }
 
+function modelCatalogText(models: ModelOption[]): string {
+  return models.map((m) => `- ${m.id} — ${m.blurb}`).join("\n");
+}
+
 function userMessage(input: BuildInput): string {
   return `Task type: ${input.type.name}
 Type description: ${input.type.description}
@@ -63,7 +69,10 @@ How the user wants these tasks handled:
 ${input.description}
 
 Available MCP tools:
-${toolCatalog(input.tools)}`;
+${toolCatalog(input.tools)}
+
+Available models (set "model" on every "ai" and "agent" step to the best-fit id below; omit only if truly indifferent):
+${modelCatalogText(input.models)}`;
 }
 
 function collectSteps(steps: RuleStep[]): RuleStep[] {
@@ -74,8 +83,9 @@ function collectSteps(steps: RuleStep[]): RuleStep[] {
   );
 }
 
-function validateReferences(definition: RuleDefinition, tools: ToolSpec[]): string[] {
+function validateReferences(definition: RuleDefinition, tools: ToolSpec[], models: ModelOption[]): string[] {
   const available = new Set(tools.map((t) => t.name));
+  const availableModels = new Set(models.map((m) => m.id));
   const problems: string[] = [];
   const seen = new Set<string>();
 
@@ -96,6 +106,10 @@ function validateReferences(definition: RuleDefinition, tools: ToolSpec[]): stri
           problems.push(`unknown tool "${name}" — it is not in the available tool list`);
         }
       }
+    }
+
+    if ((step.type === "ai" || step.type === "agent") && step.model && !availableModels.has(step.model)) {
+      problems.push(`unknown model "${step.model}" — it is not in the available model list`);
     }
   }
 
@@ -140,7 +154,7 @@ Fix it and reply with corrected JSON only.`;
       continue;
     }
 
-    const problems = validateReferences(parsed.data, input.tools);
+    const problems = validateReferences(parsed.data, input.tools, input.models);
     if (problems.length) {
       feedback = problems.join("; ");
       continue;

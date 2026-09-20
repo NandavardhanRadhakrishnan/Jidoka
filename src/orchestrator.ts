@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type { AiProvider, ToolSpec } from "./ai/provider";
 import type { ModelProviderId } from "./ai/models";
+import { modelCatalog } from "./ai/models";
 import type { Task } from "./domain/task";
 import type { Rule } from "./domain/rule";
 import { getTask, listTasks, updateTask } from "./repo/tasks";
@@ -138,6 +139,7 @@ export async function onboardType(
     type,
     description,
     tools: deps.mcp.listTools(),
+    models: modelCatalog(deps.modelProvider),
   });
   return insertRule(deps.db, { typeId, definition });
 }
