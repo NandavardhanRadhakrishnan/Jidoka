@@ -1,6 +1,8 @@
+import { useState } from "react";
 import type { RuleStep } from "../domain/rule";
 import type { ModelOption, TypeWithRules } from "./api";
 import type { ToolSpec } from "../ai/provider";
+import { TOOL_SEPARATOR } from "../mcp/names";
 
 let nextId = 1;
 function freshStepId(): string {
@@ -54,6 +56,72 @@ function ModelPicker({
         ))}
       </select>
     </label>
+  );
+}
+
+function McpToolFields({
+  step,
+  onChange,
+  ctx,
+}: {
+  step: Extract<RuleStep, { type: "mcp_tool" }>;
+  onChange: (step: RuleStep) => void;
+  ctx: Ctx;
+}) {
+  const [rawInput, setRawInput] = useState(() => JSON.stringify(step.input));
+
+  return (
+    <>
+      <label>
+        Tool
+        <select
+          value={step.server && step.tool ? `${step.server}${TOOL_SEPARATOR}${step.tool}` : ""}
+          onChange={(e) => {
+            const value = e.target.value;
+            const index = value.indexOf(TOOL_SEPARATOR);
+            const server = index === -1 ? "" : value.slice(0, index);
+            const tool = index === -1 ? "" : value.slice(index + TOOL_SEPARATOR.length);
+            onChange({ ...step, server, tool });
+          }}
+        >
+          <option value="">(choose a tool)</option>
+          {ctx.tools.map((t) => (
+            <option key={t.name} value={t.name}>
+              {t.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        Input (JSON)
+        <textarea
+          rows={2}
+          value={rawInput}
+          onChange={(e) => {
+            const text = e.target.value;
+            setRawInput(text);
+            try {
+              onChange({ ...step, input: JSON.parse(text) });
+            } catch {
+              // leave step.input as-is; the message below flags the mismatch
+            }
+          }}
+        />
+      </label>
+      {(() => {
+        try {
+          JSON.parse(rawInput);
+          return null;
+        } catch {
+          return <p className="error">Invalid JSON — not saved</p>;
+        }
+      })()}
+      <label>
+        Output key
+        <input value={step.output} onChange={(e) => onChange({ ...step, output: e.target.value })} />
+      </label>
+      <p className="meta">no model — logic</p>
+    </>
   );
 }
 
@@ -132,44 +200,7 @@ function StepBox({
       )}
 
       {step.type === "mcp_tool" && (
-        <>
-          <label>
-            Tool
-            <select
-              value={step.server && step.tool ? `${step.server}__${step.tool}` : ""}
-              onChange={(e) => {
-                const [server, tool] = e.target.value.split("__");
-                onChange({ ...step, server: server ?? "", tool: tool ?? "" });
-              }}
-            >
-              <option value="">(choose a tool)</option>
-              {ctx.tools.map((t) => (
-                <option key={t.name} value={t.name}>
-                  {t.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Input (JSON)
-            <textarea
-              rows={2}
-              value={JSON.stringify(step.input)}
-              onChange={(e) => {
-                try {
-                  onChange({ ...step, input: JSON.parse(e.target.value) });
-                } catch {
-                  // ignore invalid JSON while the user is still typing
-                }
-              }}
-            />
-          </label>
-          <label>
-            Output key
-            <input value={step.output} onChange={(e) => onChange({ ...step, output: e.target.value })} />
-          </label>
-          <p className="meta">no model — logic</p>
-        </>
+        <McpToolFields step={step} onChange={onChange} ctx={ctx} />
       )}
 
       {step.type === "assign" && (

@@ -83,7 +83,7 @@ function collectSteps(steps: RuleStep[]): RuleStep[] {
   );
 }
 
-function validateReferences(definition: RuleDefinition, tools: ToolSpec[], models: ModelOption[]): string[] {
+export function validateReferences(definition: RuleDefinition, tools: ToolSpec[], models: ModelOption[]): string[] {
   const available = new Set(tools.map((t) => t.name));
   const availableModels = new Set(models.map((m) => m.id));
   const problems: string[] = [];

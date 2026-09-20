@@ -173,6 +173,9 @@ and the task arrives assigned. `context` holds each step's output and
 | `POST` | `/api/types/:id/onboard` | Build a draft rule from a description |
 | `GET` | `/api/rules/:id` | Read a rule definition |
 | `POST` | `/api/rules/:id/activate` | Publish it and process waiting tasks |
+| `GET` | `/api/models` | Model catalog for the active provider |
+| `GET` | `/api/mcp/tools` | The MCP tool catalog available to rules |
+| `POST` | `/api/types/:id/rules` | Save a hand-edited rule as a new draft version |
 
 Across every write route: a body that isn't valid JSON, or a missing required
 field (`title`, `typeId`, `description`), returns 400; an unknown id returns 404;

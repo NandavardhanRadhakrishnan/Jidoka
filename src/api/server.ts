@@ -1,6 +1,7 @@
 import { Hono, type Context } from "hono";
 import { modelCatalog } from "../ai/models";
 import { RuleDefinitionSchema } from "../domain/rule";
+import { validateReferences } from "../rule/builder";
 import { findTaskBySource, getTask, insertTask, listTasks } from "../repo/tasks";
 import { getTaskType, listTaskTypes, mergeTaskType, updateTaskType } from "../repo/taskTypes";
 import { getActiveRule, getRule, insertRule, listRules } from "../repo/rules";
@@ -177,6 +178,11 @@ export function createServer(deps: AppDeps, extraRoutes?: Hono): Hono {
         { error: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") },
         400,
       );
+    }
+
+    const problems = validateReferences(parsed.data, deps.mcp.listTools(), modelCatalog(deps.modelProvider));
+    if (problems.length) {
+      return c.json({ error: problems.join("; ") }, 400);
     }
 
     return c.json({ rule: insertRule(deps.db, { typeId: id, definition: parsed.data }) });

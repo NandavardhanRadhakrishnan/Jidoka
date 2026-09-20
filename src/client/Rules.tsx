@@ -75,6 +75,7 @@ export function Rules() {
               key={selected.id}
               type={selected}
               initialRule={selectedRule ?? undefined}
+              onDraftSaved={refresh}
               onSaved={async () => {
                 await refresh();
               }}

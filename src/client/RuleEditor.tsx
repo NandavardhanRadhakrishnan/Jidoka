@@ -8,10 +8,14 @@ export function RuleEditor({
   type,
   initialRule,
   onSaved,
+  onDraftSaved,
+  beforeGenerate,
 }: {
   type: TypeWithRules;
   initialRule?: Rule;
   onSaved: () => Promise<void>;
+  onDraftSaved?: () => Promise<void>;
+  beforeGenerate?: () => Promise<void>;
 }) {
   const [description, setDescription] = useState("");
   const [definition, setDefinition] = useState<RuleDefinition | null>(initialRule?.definition ?? null);
@@ -32,6 +36,7 @@ export function RuleEditor({
     setBusy(true);
     setError(null);
     try {
+      if (beforeGenerate) await beforeGenerate();
       const rule = await api.onboard(type.id, description);
       setDefinition(rule.definition);
       setDraftId(rule.id);
@@ -49,6 +54,7 @@ export function RuleEditor({
     try {
       const rule = await api.saveRule(type.id, definition);
       setDraftId(rule.id);
+      if (onDraftSaved) await onDraftSaved();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {

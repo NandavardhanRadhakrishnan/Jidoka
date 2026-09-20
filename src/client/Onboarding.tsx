@@ -40,6 +40,8 @@ export function Onboarding({
 
       <RuleEditor
         type={{ ...type, name, description }}
+        beforeGenerate={saveTypeEdits}
+        onDraftSaved={onDone}
         onSaved={async () => {
           await saveTypeEdits();
           await onDone();

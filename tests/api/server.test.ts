@@ -308,6 +308,25 @@ test("POST /api/types/:id/rules saves a hand-edited definition as a new draft ve
   expect(body.rule).toMatchObject({ version: 1, status: "draft" });
 });
 
+test("POST /api/types/:id/rules rejects a definition with no terminal assign step with 400", async () => {
+  const { deps, fetch } = app();
+  const type = insertTaskType(deps.db, { name: "Customer email", description: "d" });
+
+  const response = await fetch(
+    new Request(`http://localhost/api/types/${type.id}/rules`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        definition: { steps: [{ id: "s1", type: "ai", prompt: "x", output: "o" }] },
+      }),
+    }),
+  );
+
+  expect(response.status).toBe(400);
+  const body = (await response.json()) as { error: string };
+  expect(body.error).toContain("assign");
+});
+
 test("POST /api/types/:id/rules rejects an invalid definition with 400", async () => {
   const { deps, fetch } = app();
   const type = insertTaskType(deps.db, { name: "Customer email", description: "d" });

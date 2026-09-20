@@ -3,6 +3,7 @@ import { openDb, migrate } from "../../src/db";
 
 test("migrate creates the rules table and drops the old pipelines table", () => {
   const db = openDb(":memory:");
+  db.query("CREATE TABLE pipelines (id TEXT)").run();
   migrate(db);
 
   const names = db
