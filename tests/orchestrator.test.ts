@@ -2,13 +2,13 @@ import { test, expect } from "bun:test";
 import { openDb, migrate } from "../src/db";
 import { insertTask, getTask } from "../src/repo/tasks";
 import { insertTaskType, getTaskType, listTaskTypes } from "../src/repo/taskTypes";
-import { insertPipeline, activatePipeline, getActivePipeline } from "../src/repo/pipelines";
+import { insertRule, activateRule, getActiveRule } from "../src/repo/rules";
 import {
   onTaskIngested,
   confirmTaskType,
   skipOnboarding,
   onboardType,
-  activateTypePipeline,
+  activateTypeRule,
   type AppDeps,
 } from "../src/orchestrator";
 import type { AiProvider } from "../src/ai/provider";
@@ -76,12 +76,12 @@ test("an ambiguous task waits for the user and records candidates", async () => 
   expect(result.typeCandidates).toEqual([a.id, b.id]);
 });
 
-test("a matched task with an active pipeline runs it and lands assigned", async () => {
+test("a matched task with an active rule runs it and lands assigned", async () => {
   const db = freshDb();
   const type = insertTaskType(db, { name: "Customer email", description: "d" });
-  activatePipeline(
+  activateRule(
     db,
-    insertPipeline(db, {
+    insertRule(db, {
       typeId: type.id,
       definition: {
         steps: [
@@ -104,12 +104,12 @@ test("a matched task with an active pipeline runs it and lands assigned", async 
   expect(result.context.summary).toBe("Customer is chasing a delivery");
 });
 
-test("a failing pipeline leaves the task in the failed state with the error recorded", async () => {
+test("a failing rule leaves the task in the failed state with the error recorded", async () => {
   const db = freshDb();
   const type = insertTaskType(db, { name: "Customer email", description: "d" });
-  activatePipeline(
+  activateRule(
     db,
-    insertPipeline(db, {
+    insertRule(db, {
       typeId: type.id,
       definition: {
         steps: [
@@ -167,7 +167,7 @@ test("skipping onboarding assigns the task to a human and leaves the type propos
   expect(getTaskType(db, type.id)?.status).toBe("proposed");
 });
 
-test("activating an onboarded pipeline processes the tasks that were waiting", async () => {
+test("activating an onboarded rule processes the tasks that were waiting", async () => {
   const db = freshDb();
   const type = insertTaskType(db, { name: "Customer email", description: "d" });
   const task = insertTask(db, sample);
@@ -187,9 +187,9 @@ test("activating an onboarded pipeline processes the tasks that were waiting", a
   expect(draft.status).toBe("draft");
   expect(getTask(db, task.id)?.state).toBe("needs_onboarding");
 
-  await activateTypePipeline(app, draft.id);
+  await activateTypeRule(app, draft.id);
 
-  expect(getActivePipeline(db, type.id)?.id).toBe(draft.id);
+  expect(getActiveRule(db, type.id)?.id).toBe(draft.id);
   expect(getTaskType(db, type.id)?.status).toBe("active");
   const processed = getTask(db, task.id);
   expect(processed?.state).toBe("assigned_human");

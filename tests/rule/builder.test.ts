@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { buildPipeline } from "../../src/pipeline/builder";
+import { buildRule } from "../../src/rule/builder";
 import type { AiProvider } from "../../src/ai/provider";
 import type { TaskType } from "../../src/domain/taskType";
 
@@ -34,10 +34,10 @@ const valid = JSON.stringify({
   ],
 });
 
-test("buildPipeline returns a validated definition", async () => {
+test("buildRule returns a validated definition", async () => {
   const provider = scripted([valid]);
 
-  const definition = await buildPipeline(provider, {
+  const definition = await buildRule(provider, {
     type,
     description: "Summarize the email then give it to a human",
     tools: [
@@ -51,19 +51,19 @@ test("buildPipeline returns a validated definition", async () => {
   expect(provider.prompts[0]).toContain("Summarize the email then give it to a human");
 });
 
-test("buildPipeline retries once when the model emits an invalid step", async () => {
+test("buildRule retries once when the model emits an invalid step", async () => {
   const provider = scripted([
     JSON.stringify({ steps: [{ id: "s1", type: "teleport" }] }),
     valid,
   ]);
 
-  const definition = await buildPipeline(provider, { type, description: "d", tools: [] });
+  const definition = await buildRule(provider, { type, description: "d", tools: [] });
 
   expect(definition.steps).toHaveLength(2);
   expect(provider.prompts).toHaveLength(2);
 });
 
-test("buildPipeline rejects a definition that references an unknown tool", async () => {
+test("buildRule rejects a definition that references an unknown tool", async () => {
   const provider = scripted([
     JSON.stringify({
       steps: [
@@ -74,7 +74,7 @@ test("buildPipeline rejects a definition that references an unknown tool", async
     valid,
   ]);
 
-  const definition = await buildPipeline(provider, {
+  const definition = await buildRule(provider, {
     type,
     description: "d",
     tools: [

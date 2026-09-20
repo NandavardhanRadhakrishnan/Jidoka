@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type { AiProvider, ToolSpec } from "./ai/provider";
 import type { Task } from "./domain/task";
-import type { Pipeline } from "./domain/pipeline";
+import type { Rule } from "./domain/rule";
 import { getTask, listTasks, updateTask } from "./repo/tasks";
 import {
   getTaskType,
@@ -10,16 +10,16 @@ import {
   updateTaskType,
 } from "./repo/taskTypes";
 import {
-  activatePipeline,
-  getActivePipeline,
-  getPipeline,
-  insertPipeline,
-  listPipelines,
-} from "./repo/pipelines";
+  activateRule,
+  getActiveRule,
+  getRule,
+  insertRule,
+  listRules,
+} from "./repo/rules";
 import { triageTask } from "./triage/triage";
-import { runPipeline, type ToolCaller } from "./pipeline/executor";
+import { runRule, type ToolCaller } from "./rule/executor";
 import type { AgentRunner } from "./agent/runner";
-import { buildPipeline } from "./pipeline/builder";
+import { buildRule } from "./rule/builder";
 
 export interface AppDeps {
   db: Database;
@@ -60,31 +60,31 @@ export async function onTaskIngested(deps: AppDeps, task: Task): Promise<Task> {
 
 async function processTask(deps: AppDeps, task: Task): Promise<Task> {
   if (!task.typeId) throw new Error(`processTask: task ${task.id} has no type`);
-  const pipeline = getActivePipeline(deps.db, task.typeId);
-  if (!pipeline) return updateTask(deps.db, task.id, { state: "needs_onboarding" });
-  return runPipelineForTask(deps, task, pipeline);
+  const rule = getActiveRule(deps.db, task.typeId);
+  if (!rule) return updateTask(deps.db, task.id, { state: "needs_onboarding" });
+  return runRuleForTask(deps, task, rule);
 }
 
-export async function runPipelineForTask(
+export async function runRuleForTask(
   deps: AppDeps,
   task: Task,
-  pipeline?: Pipeline,
+  rule?: Rule,
 ): Promise<Task> {
-  if (!task.typeId) throw new Error(`runPipelineForTask: task ${task.id} has no type`);
-  const active = pipeline ?? getActivePipeline(deps.db, task.typeId);
+  if (!task.typeId) throw new Error(`runRuleForTask: task ${task.id} has no type`);
+  const active = rule ?? getActiveRule(deps.db, task.typeId);
   if (!active) return updateTask(deps.db, task.id, { state: "needs_onboarding" });
 
   const running = updateTask(deps.db, task.id, { state: "processing" });
 
   try {
-    const result = await runPipeline(
+    const result = await runRule(
       {
         provider: deps.provider,
         callTool: deps.mcp.callTool,
         listTools: () => deps.mcp.listTools(),
         ...(deps.runAgent ? { runAgent: deps.runAgent } : {}),
-        loadPipeline: (typeId, version) =>
-          listPipelines(deps.db, typeId).find((p) => p.version === version)?.definition ?? null,
+        loadRule: (typeId, version) =>
+          listRules(deps.db, typeId).find((p) => p.version === version)?.definition ?? null,
         self: { typeId: active.typeId, version: active.version },
       },
       active.definition,
@@ -94,7 +94,7 @@ export async function runPipelineForTask(
     return updateTask(deps.db, task.id, {
       context: {
         ...result.context,
-        pipelineLog: result.log,
+        ruleLog: result.log,
         ...(result.handoff ? { handoff: result.handoff } : {}),
       },
       assignee: result.assignee,
@@ -128,44 +128,44 @@ export async function onboardType(
   deps: AppDeps,
   typeId: string,
   description: string,
-): Promise<Pipeline> {
+): Promise<Rule> {
   const type = getTaskType(deps.db, typeId);
   if (!type) throw new Error(`onboardType: unknown type ${typeId}`);
 
-  const definition = await buildPipeline(deps.provider, {
+  const definition = await buildRule(deps.provider, {
     type,
     description,
     tools: deps.mcp.listTools(),
   });
-  return insertPipeline(deps.db, { typeId, definition });
+  return insertRule(deps.db, { typeId, definition });
 }
 
-/** Runs the newly active pipeline over every task of its type that was waiting. */
-export async function processWaitingTasks(deps: AppDeps, pipeline: Pipeline): Promise<void> {
+/** Runs the newly active rule over every task of its type that was waiting. */
+export async function processWaitingTasks(deps: AppDeps, rule: Rule): Promise<void> {
   for (const task of listTasks(deps.db)) {
-    if (task.typeId === pipeline.typeId && task.state === "needs_onboarding") {
-      await runPipelineForTask(deps, task, pipeline);
+    if (task.typeId === rule.typeId && task.state === "needs_onboarding") {
+      await runRuleForTask(deps, task, rule);
     }
   }
 }
 
-export async function activateTypePipeline(
+export async function activateTypeRule(
   deps: AppDeps,
-  pipelineId: string,
+  ruleId: string,
   options: { background?: boolean } = {},
-): Promise<Pipeline> {
-  const pipeline = getPipeline(deps.db, pipelineId);
-  if (!pipeline) throw new Error(`activateTypePipeline: unknown pipeline ${pipelineId}`);
+): Promise<Rule> {
+  const rule = getRule(deps.db, ruleId);
+  if (!rule) throw new Error(`activateTypeRule: unknown rule ${ruleId}`);
 
-  const active = activatePipeline(deps.db, pipelineId);
-  updateTaskType(deps.db, pipeline.typeId, { status: "active" });
+  const active = activateRule(deps.db, ruleId);
+  updateTaskType(deps.db, rule.typeId, { status: "active" });
 
-  // A pipeline with an agent step can run for minutes, far longer than an HTTP
+  // A rule with an agent step can run for minutes, far longer than an HTTP
   // request should be held open, so callers over HTTP process in the background
   // and watch the board for the tasks to move.
   if (options.background) {
     void processWaitingTasks(deps, active).catch((error) => {
-      console.error(`[orchestrator] processing tasks for ${pipeline.typeId} failed:`, error);
+      console.error(`[orchestrator] processing tasks for ${rule.typeId} failed:`, error);
     });
   } else {
     await processWaitingTasks(deps, active);

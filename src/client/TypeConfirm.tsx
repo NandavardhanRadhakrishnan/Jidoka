@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { Task } from "../domain/task";
-import type { TypeWithPipelines } from "./api";
+import type { TypeWithRules } from "./api";
 
 export function TypeConfirm({
   task,
@@ -9,7 +9,7 @@ export function TypeConfirm({
   onClose,
 }: {
   task: Task;
-  types: TypeWithPipelines[];
+  types: TypeWithRules[];
   onConfirm: (typeId: string) => Promise<void>;
   onClose: () => void;
 }) {

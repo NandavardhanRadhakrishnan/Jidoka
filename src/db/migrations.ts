@@ -25,7 +25,7 @@ export const MIGRATIONS: string[] = [
      created_at TEXT NOT NULL,
      updated_at TEXT NOT NULL
    )`,
-  `CREATE TABLE IF NOT EXISTS pipelines (
+  `CREATE TABLE IF NOT EXISTS rules (
      id TEXT PRIMARY KEY,
      type_id TEXT NOT NULL REFERENCES task_types(id) ON DELETE CASCADE,
      version INTEGER NOT NULL,
@@ -34,6 +34,7 @@ export const MIGRATIONS: string[] = [
      created_at TEXT NOT NULL,
      UNIQUE (type_id, version)
    )`,
+  `DROP TABLE IF EXISTS pipelines`,
   `CREATE TABLE IF NOT EXISTS source_state (
      source_id TEXT PRIMARY KEY,
      cursor TEXT

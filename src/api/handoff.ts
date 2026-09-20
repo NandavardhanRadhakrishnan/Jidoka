@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { Database } from "bun:sqlite";
 import { getTask, updateTask } from "../repo/tasks";
-import type { ResolvedHandoffTarget } from "../pipeline/executor";
+import type { ResolvedHandoffTarget } from "../rule/executor";
 
 export interface HandoffDeps {
   db: Database;
@@ -38,7 +38,7 @@ export function taskHandoff(db: Database, taskId: string): ResolvedHandoffTarget
 /**
  * Handoff: what a human should have open when they pick a task up.
  *
- * `run-command` deliberately takes a label, not a command string. Pipelines are
+ * `run-command` deliberately takes a label, not a command string. Rules are
  * written by a model from task content, so the command text is untrusted input;
  * the server only ever launches something already stored on that task's own
  * handoff, and only in a visible terminal.

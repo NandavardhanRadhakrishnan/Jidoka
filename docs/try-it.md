@@ -14,7 +14,7 @@ export JIDOKA_SAMPLE_DIR=./samples      # optional: also ingests the files in sa
 bun run dev                             # http://localhost:3000
 ```
 
-Triage and pipeline building are real model calls, so a working key is required.
+Triage and rule building are real model calls, so a working key is required.
 Without one, injection still stores the task but returns 502 with the error.
 
 > The examples use `BASE=http://localhost:3000` and `jq` to pull ids out of the
@@ -54,7 +54,7 @@ UUID), `metadata`.
 
 ```bash
 curl -s "$BASE/api/tasks" | jq '.tasks[] | {state, title, typeId, typeCandidates}'
-curl -s "$BASE/api/types" | jq '.types[] | {id, name, status, activePipelineId}'
+curl -s "$BASE/api/types" | jq '.types[] | {id, name, status, activeRuleId}'
 ```
 
 Task states: `ingested`, `needs_type_confirmation`, `needs_onboarding`,
@@ -76,30 +76,30 @@ curl -s -X POST "$BASE/api/tasks/$TASK/type" \
 Your answer is saved as an example on that type, so the next similar task is
 classified without asking.
 
-## 4. Onboard the type — describe it, an agent builds the pipeline
+## 4. Onboard the type — describe it, an agent builds the rule
 
 ```bash
 TYPE=$(curl -s "$BASE/api/types" | jq -r '.types[0].id')
 
-PIPELINE=$(curl -s -X POST "$BASE/api/types/$TYPE/onboard" \
+RULE=$(curl -s -X POST "$BASE/api/types/$TYPE/onboard" \
   -H 'content-type: application/json' \
   -d '{
     "description": "Summarize what the customer is asking in two sentences. Then decide whether this is a simple status question or a complaint: label it status or complaint. Status questions go to AI, complaints go to a human with the summary attached."
-  }' | tee /dev/stderr | jq -r '.pipeline.id')
+  }' | tee /dev/stderr | jq -r '.rule.id')
 ```
 
 This returns a **draft** — nothing runs yet. Read the definition first:
 
 ```bash
-curl -s "$BASE/api/pipelines/$PIPELINE" | jq '.pipeline.definition'
+curl -s "$BASE/api/rules/$RULE" | jq '.rule.definition'
 ```
 
 Step kinds it can use: `ai` (one prompt), `agent` (loops over MCP tools until
 done), `mcp_tool` (one known call), `branch` (on an earlier step's output),
-`assign` (`ai` or `human`), `call_pipeline`. `agent` and `mcp_tool` steps only
+`assign` (`ai` or `human`), `call_rule`. `agent` and `mcp_tool` steps only
 appear when MCP servers are configured through `JIDOKA_MCP_SERVERS`.
 
-The builder rejects pipelines that reference tools you don't have or that can
+The builder rejects rules that reference tools you don't have or that can
 finish without assigning the task, and retries the model once before giving up
 with 502.
 
@@ -123,15 +123,15 @@ curl -s -X PATCH "$BASE/api/types/$DUPLICATE" \
 ## 5. Activate — waiting tasks get processed
 
 ```bash
-curl -s -X POST "$BASE/api/pipelines/$PIPELINE/activate" | jq '.pipeline | {version, status}'
+curl -s -X POST "$BASE/api/rules/$RULE/activate" | jq '.rule | {version, status}'
 curl -s "$BASE/api/tasks" | jq '.tasks[] | {state, assignee, title, context}'
 ```
 
-Activation publishes the draft, marks the type active, and runs the pipeline over
+Activation publishes the draft, marks the type active, and runs the rule over
 every task of that type still in `needs_onboarding`. Any previous version becomes
 `superseded`.
 
-Don't want a pipeline for a task right now?
+Don't want a rule for a task right now?
 
 ```bash
 curl -s -X POST "$BASE/api/tasks/$TASK/skip-onboarding" | jq '.task | {state, assignee}'
@@ -151,9 +151,9 @@ curl -s -X POST "$BASE/api/tasks" \
   }' | jq '.task | {state, assignee, context}'
 ```
 
-No questions asked this time: triage matches the existing type, the pipeline runs,
+No questions asked this time: triage matches the existing type, the rule runs,
 and the task arrives assigned. `context` holds each step's output and
-`context.pipelineLog` lists which steps ran. A `failed` task carries
+`context.ruleLog` lists which steps ran. A `failed` task carries
 `context.error`.
 
 ## Endpoint reference
@@ -163,16 +163,16 @@ and the task arrives assigned. `context` holds each step's output and
 | `GET` | `/api/tasks` | Everything on the board |
 | `POST` | `/api/tasks` | Inject a task and triage it |
 | `POST` | `/api/tasks/:id/type` | Answer an ambiguous triage |
-| `POST` | `/api/tasks/:id/skip-onboarding` | Assign to a human without a pipeline |
+| `POST` | `/api/tasks/:id/skip-onboarding` | Assign to a human without a rule |
 | `POST` | `/api/tasks/:id/pick-up` | Stamp `pickedUpAt` and return the handoff targets |
 | `POST` | `/api/tasks/:id/run-command` | Launch a handoff command by `label` (needs `JIDOKA_TERMINAL`) |
 | `POST` | `/api/tasks/:id/complete` | Mark done, with an optional `note` |
 | `POST` | `/api/tasks/:id/reopen` | Undo a completion |
-| `GET` | `/api/types` | Type registry with pipeline versions |
+| `GET` | `/api/types` | Type registry with rule versions |
 | `PATCH` | `/api/types/:id` | Rename, re-describe, or `mergeInto` another type |
-| `POST` | `/api/types/:id/onboard` | Build a draft pipeline from a description |
-| `GET` | `/api/pipelines/:id` | Read a pipeline definition |
-| `POST` | `/api/pipelines/:id/activate` | Publish it and process waiting tasks |
+| `POST` | `/api/types/:id/onboard` | Build a draft rule from a description |
+| `GET` | `/api/rules/:id` | Read a rule definition |
+| `POST` | `/api/rules/:id/activate` | Publish it and process waiting tasks |
 
 Across every write route: a body that isn't valid JSON, or a missing required
 field (`title`, `typeId`, `description`), returns 400; an unknown id returns 404;

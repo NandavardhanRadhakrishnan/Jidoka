@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
-import { PipelineDefinitionSchema } from "../../src/domain/pipeline";
-import { runPipeline, resolveHandoff } from "../../src/pipeline/executor";
+import { RuleDefinitionSchema } from "../../src/domain/rule";
+import { runRule, resolveHandoff } from "../../src/rule/executor";
 import type { Task } from "../../src/domain/task";
 import type { AgentRunner } from "../../src/agent/runner";
 
@@ -48,7 +48,7 @@ test("session targets become a resume command and empty ones are dropped", () =>
 });
 
 test("an agent step's session id reaches the handoff the assign step declares", async () => {
-  const definition = PipelineDefinitionSchema.parse({
+  const definition = RuleDefinitionSchema.parse({
     steps: [
       {
         id: "s1",
@@ -76,11 +76,11 @@ test("an agent step's session id reaches the handoff the assign step declares", 
     },
   };
 
-  const result = await runPipeline(
+  const result = await runRule(
     {
       provider: { id: "stub", async complete() { return { text: "", toolCalls: [] }; } },
       callTool: async () => "",
-      loadPipeline: () => null,
+      loadRule: () => null,
       listTools: () => [
         { name: "github__get_pr", description: "PR", inputSchema: { type: "object" } },
       ],
@@ -99,15 +99,15 @@ test("an agent step's session id reaches the handoff the assign step declares", 
 });
 
 test("an assign step with no open list produces no handoff", async () => {
-  const definition = PipelineDefinitionSchema.parse({
+  const definition = RuleDefinitionSchema.parse({
     steps: [{ id: "s1", type: "assign", to: "human" }],
   });
 
-  const result = await runPipeline(
+  const result = await runRule(
     {
       provider: { id: "stub", async complete() { return { text: "", toolCalls: [] }; } },
       callTool: async () => "",
-      loadPipeline: () => null,
+      loadRule: () => null,
     },
     definition,
     task,

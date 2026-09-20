@@ -1,9 +1,9 @@
 import { Hono, type Context } from "hono";
 import { findTaskBySource, getTask, insertTask, listTasks } from "../repo/tasks";
 import { getTaskType, listTaskTypes, mergeTaskType, updateTaskType } from "../repo/taskTypes";
-import { getActivePipeline, getPipeline, listPipelines } from "../repo/pipelines";
+import { getActiveRule, getRule, listRules } from "../repo/rules";
 import {
-  activateTypePipeline,
+  activateTypeRule,
   completeTask,
   confirmTaskType,
   reopenTask,
@@ -28,7 +28,7 @@ export function createServer(deps: AppDeps, extraRoutes?: Hono): Hono {
 
   app.get("/api/tasks", (c) => c.json({ tasks: listTasks(deps.db) }));
 
-  // Inject a task by hand: the quickest way to exercise triage and pipelines
+  // Inject a task by hand: the quickest way to exercise triage and rules
   // without waiting for a real source to poll.
   app.post("/api/tasks", async (c) => {
     const input = await readJson<{
@@ -73,8 +73,8 @@ export function createServer(deps: AppDeps, extraRoutes?: Hono): Hono {
     c.json({
       types: listTaskTypes(deps.db).map((type) => ({
         ...type,
-        activePipelineId: getActivePipeline(deps.db, type.id)?.id ?? null,
-        pipelines: listPipelines(deps.db, type.id).map((p) => ({
+        activeRuleId: getActiveRule(deps.db, type.id)?.id ?? null,
+        rules: listRules(deps.db, type.id).map((p) => ({
           id: p.id,
           version: p.version,
           status: p.status,
@@ -83,9 +83,9 @@ export function createServer(deps: AppDeps, extraRoutes?: Hono): Hono {
     }),
   );
 
-  app.get("/api/pipelines/:id", (c) => {
-    const pipeline = getPipeline(deps.db, c.req.param("id"));
-    return pipeline ? c.json({ pipeline }) : c.json({ error: "unknown pipeline" }, 404);
+  app.get("/api/rules/:id", (c) => {
+    const rule = getRule(deps.db, c.req.param("id"));
+    return rule ? c.json({ rule }) : c.json({ error: "unknown rule" }, 404);
   });
 
   app.post("/api/tasks/:id/type", async (c) => {
@@ -144,17 +144,17 @@ export function createServer(deps: AppDeps, extraRoutes?: Hono): Hono {
     if (!input?.description?.trim()) return c.json({ error: "description is required" }, 400);
     const description = input.description;
     try {
-      return c.json({ pipeline: await onboardType(deps, id, description) });
+      return c.json({ rule: await onboardType(deps, id, description) });
     } catch (error) {
       return c.json({ error: error instanceof Error ? error.message : String(error) }, 502);
     }
   });
 
-  app.post("/api/pipelines/:id/activate", async (c) => {
+  app.post("/api/rules/:id/activate", async (c) => {
     const id = c.req.param("id");
-    if (!getPipeline(deps.db, id)) return c.json({ error: "unknown pipeline" }, 404);
+    if (!getRule(deps.db, id)) return c.json({ error: "unknown rule" }, 404);
     // Waiting tasks are processed after the response; the board shows them move.
-    return c.json({ pipeline: await activateTypePipeline(deps, id, { background: true }) });
+    return c.json({ rule: await activateTypeRule(deps, id, { background: true }) });
   });
 
   return app;

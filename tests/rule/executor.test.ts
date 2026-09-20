@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
-import { runPipeline } from "../../src/pipeline/executor";
-import { PipelineDefinitionSchema } from "../../src/domain/pipeline";
+import { runRule } from "../../src/rule/executor";
+import { RuleDefinitionSchema } from "../../src/domain/rule";
 import type { AiProvider } from "../../src/ai/provider";
 import type { Task } from "../../src/domain/task";
 
@@ -37,10 +37,10 @@ function scriptedProvider(replies: string[]): AiProvider & { prompts: string[] }
 const noTools = async () => {
   throw new Error("no MCP in this test");
 };
-const noPipelines = () => null;
+const noRules = () => null;
 
 test("an ai step stores its output in the context and can be templated into the next step", async () => {
-  const definition = PipelineDefinitionSchema.parse({
+  const definition = RuleDefinitionSchema.parse({
     steps: [
       { id: "s1", type: "ai", prompt: "Summarize: {{task.body}}", output: "summary" },
       { id: "s2", type: "ai", prompt: "Classify: {{context.summary}}", output: "category" },
@@ -49,8 +49,8 @@ test("an ai step stores its output in the context and can be templated into the 
   });
   const provider = scriptedProvider(["Customer chasing delivery", "external"]);
 
-  const result = await runPipeline(
-    { provider, callTool: noTools, loadPipeline: noPipelines },
+  const result = await runRule(
+    { provider, callTool: noTools, loadRule: noRules },
     definition,
     task,
   );
@@ -63,7 +63,7 @@ test("an ai step stores its output in the context and can be templated into the 
 });
 
 test("a branch step runs the matching case and falls back to default", async () => {
-  const definition = PipelineDefinitionSchema.parse({
+  const definition = RuleDefinitionSchema.parse({
     steps: [
       { id: "s1", type: "ai", prompt: "Classify {{task.title}}", output: "category" },
       {
@@ -79,16 +79,16 @@ test("a branch step runs the matching case and falls back to default", async () 
     ],
   });
 
-  const external = await runPipeline(
-    { provider: scriptedProvider(["external"]), callTool: noTools, loadPipeline: noPipelines },
+  const external = await runRule(
+    { provider: scriptedProvider(["external"]), callTool: noTools, loadRule: noRules },
     definition,
     task,
   );
   expect(external.assignee).toBe("human");
   expect(external.log.map((e) => e.stepId)).toEqual(["s1", "s2", "s2a"]);
 
-  const unknown = await runPipeline(
-    { provider: scriptedProvider(["something else"]), callTool: noTools, loadPipeline: noPipelines },
+  const unknown = await runRule(
+    { provider: scriptedProvider(["something else"]), callTool: noTools, loadRule: noRules },
     definition,
     task,
   );
@@ -96,7 +96,7 @@ test("a branch step runs the matching case and falls back to default", async () 
 });
 
 test("an mcp_tool step renders its input and stores the tool result", async () => {
-  const definition = PipelineDefinitionSchema.parse({
+  const definition = RuleDefinitionSchema.parse({
     steps: [
       {
         id: "s1",
@@ -111,14 +111,14 @@ test("an mcp_tool step renders its input and stores the tool result", async () =
   });
   const calls: unknown[] = [];
 
-  const result = await runPipeline(
+  const result = await runRule(
     {
       provider: scriptedProvider([]),
       callTool: async (server, tool, input) => {
         calls.push({ server, tool, input });
         return "thread text";
       },
-      loadPipeline: noPipelines,
+      loadRule: noRules,
     },
     definition,
     task,
@@ -132,7 +132,7 @@ test("an mcp_tool step renders its input and stores the tool result", async () =
 });
 
 test("an agent step loops over tool calls until the model stops calling tools", async () => {
-  const definition = PipelineDefinitionSchema.parse({
+  const definition = RuleDefinitionSchema.parse({
     steps: [
       {
         id: "s1",
@@ -172,14 +172,14 @@ test("an agent step loops over tool calls until the model stops calling tools", 
   };
   const toolCalls: string[] = [];
 
-  const result = await runPipeline(
+  const result = await runRule(
     {
       provider,
       callTool: async (server, tool) => {
         toolCalls.push(`${server}/${tool}`);
         return "tool output";
       },
-      loadPipeline: noPipelines,
+      loadRule: noRules,
       listTools: () => [
         { name: "outlook__search_messages", description: "Search", inputSchema: { type: "object" } },
         { name: "outlook__get_thread", description: "Thread", inputSchema: { type: "object" } },
@@ -204,7 +204,7 @@ test("an agent step loops over tool calls until the model stops calling tools", 
 });
 
 test("an agent step stops at maxIterations", async () => {
-  const definition = PipelineDefinitionSchema.parse({
+  const definition = RuleDefinitionSchema.parse({
     steps: [
       {
         id: "s1",
@@ -219,7 +219,7 @@ test("an agent step stops at maxIterations", async () => {
   });
   let calls = 0;
 
-  await runPipeline(
+  await runRule(
     {
       provider: {
         id: "stub",
@@ -233,7 +233,7 @@ test("an agent step stops at maxIterations", async () => {
         },
       },
       callTool: async () => "output",
-      loadPipeline: noPipelines,
+      loadRule: noRules,
       listTools: () => [
         { name: "outlook__get_thread", description: "Thread", inputSchema: { type: "object" } },
       ],
@@ -246,7 +246,7 @@ test("an agent step stops at maxIterations", async () => {
 });
 
 test("an agent step fails when a tool fails twice", async () => {
-  const definition = PipelineDefinitionSchema.parse({
+  const definition = RuleDefinitionSchema.parse({
     steps: [
       {
         id: "s1",
@@ -260,7 +260,7 @@ test("an agent step fails when a tool fails twice", async () => {
   });
 
   await expect(
-    runPipeline(
+    runRule(
       {
         provider: {
           id: "stub",
@@ -275,7 +275,7 @@ test("an agent step fails when a tool fails twice", async () => {
         callTool: async () => {
           throw new Error("graph timeout");
         },
-        loadPipeline: noPipelines,
+        loadRule: noRules,
         listTools: () => [
           { name: "outlook__get_thread", description: "Thread", inputSchema: { type: "object" } },
         ],
@@ -287,7 +287,7 @@ test("an agent step fails when a tool fails twice", async () => {
 });
 
 test("an agent step refuses tools that are not available", async () => {
-  const definition = PipelineDefinitionSchema.parse({
+  const definition = RuleDefinitionSchema.parse({
     steps: [
       { id: "s1", type: "agent", prompt: "Go", tools: ["ghost__tool"], output: "brief" },
       { id: "s2", type: "assign", to: "human" },
@@ -295,11 +295,11 @@ test("an agent step refuses tools that are not available", async () => {
   });
 
   await expect(
-    runPipeline(
+    runRule(
       {
         provider: scriptedProvider([]),
         callTool: noTools,
-        loadPipeline: noPipelines,
+        loadRule: noRules,
         listTools: () => [],
       },
       definition,
@@ -308,23 +308,23 @@ test("an agent step refuses tools that are not available", async () => {
   ).rejects.toThrow(/unavailable tools ghost__tool/);
 });
 
-test("call_pipeline runs the pinned version and merges its context", async () => {
-  const child = PipelineDefinitionSchema.parse({
+test("call_rule runs the pinned version and merges its context", async () => {
+  const child = RuleDefinitionSchema.parse({
     steps: [{ id: "c1", type: "ai", prompt: "Summarize {{task.title}}", output: "summary" }],
   });
-  const parent = PipelineDefinitionSchema.parse({
+  const parent = RuleDefinitionSchema.parse({
     steps: [
-      { id: "p1", type: "call_pipeline", typeId: "type-2", version: 3 },
+      { id: "p1", type: "call_rule", typeId: "type-2", version: 3 },
       { id: "p2", type: "assign", to: "human" },
     ],
   });
   const asked: string[] = [];
 
-  const result = await runPipeline(
+  const result = await runRule(
     {
       provider: scriptedProvider(["done"]),
       callTool: noTools,
-      loadPipeline: (typeId, version) => {
+      loadRule: (typeId, version) => {
         asked.push(`${typeId}@${version}`);
         return child;
       },
@@ -337,17 +337,17 @@ test("call_pipeline runs the pinned version and merges its context", async () =>
   expect(result.context.summary).toBe("done");
 });
 
-test("a pipeline that calls itself fails instead of looping", async () => {
-  const selfCalling = PipelineDefinitionSchema.parse({
-    steps: [{ id: "p1", type: "call_pipeline", typeId: "type-1", version: 1 }],
+test("a rule that calls itself fails instead of looping", async () => {
+  const selfCalling = RuleDefinitionSchema.parse({
+    steps: [{ id: "p1", type: "call_rule", typeId: "type-1", version: 1 }],
   });
 
   await expect(
-    runPipeline(
+    runRule(
       {
         provider: scriptedProvider([]),
         callTool: noTools,
-        loadPipeline: () => selfCalling,
+        loadRule: () => selfCalling,
         self: { typeId: "type-1", version: 1 },
       },
       selfCalling,
@@ -358,6 +358,6 @@ test("a pipeline that calls itself fails instead of looping", async () => {
 
 test("the schema rejects an unknown step type", () => {
   expect(() =>
-    PipelineDefinitionSchema.parse({ steps: [{ id: "x", type: "teleport" }] }),
+    RuleDefinitionSchema.parse({ steps: [{ id: "x", type: "teleport" }] }),
   ).toThrow();
 });

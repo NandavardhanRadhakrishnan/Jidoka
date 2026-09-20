@@ -1,6 +1,6 @@
 import type { Task } from "../domain/task";
 import type { TaskType } from "../domain/taskType";
-import type { Pipeline } from "../domain/pipeline";
+import type { Rule } from "../domain/rule";
 import type { ExtensionAuth } from "../domain/extension";
 
 export type HandoffTarget =
@@ -16,9 +16,9 @@ export interface AuthProviderStatus {
   canRefresh: boolean;
 }
 
-export interface TypeWithPipelines extends TaskType {
-  activePipelineId: string | null;
-  pipelines: { id: string; version: number; status: string }[];
+export interface TypeWithRules extends TaskType {
+  activeRuleId: string | null;
+  rules: { id: string; version: number; status: string }[];
 }
 
 export interface ExtensionListItem {
@@ -58,8 +58,8 @@ async function json<T>(input: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   tasks: () => json<{ tasks: Task[] }>("/api/tasks").then((r) => r.tasks),
-  types: () => json<{ types: TypeWithPipelines[] }>("/api/types").then((r) => r.types),
-  pipeline: (id: string) => json<{ pipeline: Pipeline }>(`/api/pipelines/${id}`).then((r) => r.pipeline),
+  types: () => json<{ types: TypeWithRules[] }>("/api/types").then((r) => r.types),
+  rule: (id: string) => json<{ rule: Rule }>(`/api/rules/${id}`).then((r) => r.rule),
   auth: () =>
     json<{ providers: AuthProviderStatus[] }>("/api/auth").then((r) => r.providers),
   signOut: (providerId: string) =>
@@ -101,13 +101,13 @@ export const api = {
       body: JSON.stringify(patch),
     }),
   onboard: (typeId: string, description: string) =>
-    json<{ pipeline: Pipeline }>(`/api/types/${typeId}/onboard`, {
+    json<{ rule: Rule }>(`/api/types/${typeId}/onboard`, {
       method: "POST",
       body: JSON.stringify({ description }),
-    }).then((r) => r.pipeline),
-  activate: (pipelineId: string) =>
-    json<{ pipeline: Pipeline }>(`/api/pipelines/${pipelineId}/activate`, { method: "POST" }).then(
-      (r) => r.pipeline,
+    }).then((r) => r.rule),
+  activate: (ruleId: string) =>
+    json<{ rule: Rule }>(`/api/rules/${ruleId}/activate`, { method: "POST" }).then(
+      (r) => r.rule,
     ),
   extensions: () => json<{ extensions: ExtensionListItem[] }>("/api/extensions").then((r) => r.extensions),
   rescanExtensions: () =>

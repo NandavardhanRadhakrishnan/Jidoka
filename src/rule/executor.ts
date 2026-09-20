@@ -1,6 +1,6 @@
 import type { AiProvider, ToolSpec } from "../ai/provider";
 import type { Assignee, Task } from "../domain/task";
-import type { HandoffTarget, PipelineDefinition, PipelineStep } from "../domain/pipeline";
+import type { HandoffTarget, RuleDefinition, RuleStep } from "../domain/rule";
 import { createInProcessRunner, type AgentRunner } from "../agent/runner";
 import { renderInput, renderTemplate, type TemplateScope } from "./template";
 
@@ -10,12 +10,12 @@ export type ToolCaller = (
   input: Record<string, unknown>,
 ) => Promise<string>;
 
-export type PipelineLoader = (typeId: string, version: number) => PipelineDefinition | null;
+export type RuleLoader = (typeId: string, version: number) => RuleDefinition | null;
 
 export interface ExecutorDeps {
   provider: AiProvider;
   callTool: ToolCaller;
-  loadPipeline: PipelineLoader;
+  loadRule: RuleLoader;
   /** Tool catalogue for agent steps; names are `server__tool`. */
   listTools?: () => ToolSpec[];
   /**
@@ -23,13 +23,13 @@ export interface ExecutorDeps {
    * and `callTool`; set it to the Agent SDK runner to use subscription auth.
    */
   runAgent?: AgentRunner;
-  /** The pipeline being run, so that a self-call is detected as a loop. */
+  /** The rule being run, so that a self-call is detected as a loop. */
   self?: { typeId: string; version: number };
 }
 
 export interface StepLogEntry {
   stepId: string;
-  type: PipelineStep["type"];
+  type: RuleStep["type"];
   output?: string;
   error?: string;
 }
@@ -114,7 +114,7 @@ function scopeFor(task: Task, state: RunState): TemplateScope {
 
 async function runSteps(
   deps: ExecutorDeps,
-  steps: PipelineStep[],
+  steps: RuleStep[],
   task: Task,
   state: RunState,
 ): Promise<void> {
@@ -189,16 +189,16 @@ async function runSteps(
         await runSteps(deps, chosen, task, state);
         break;
       }
-      case "call_pipeline": {
+      case "call_rule": {
         const key = `${step.typeId}@${step.version}`;
         if (state.stack.includes(key)) {
-          throw new Error(`pipeline loop detected: ${[...state.stack, key].join(" -> ")}`);
+          throw new Error(`rule loop detected: ${[...state.stack, key].join(" -> ")}`);
         }
         if (state.stack.length >= MAX_DEPTH) {
-          throw new Error(`pipeline nesting deeper than ${MAX_DEPTH}: ${state.stack.join(" -> ")}`);
+          throw new Error(`rule nesting deeper than ${MAX_DEPTH}: ${state.stack.join(" -> ")}`);
         }
-        const child = deps.loadPipeline(step.typeId, step.version);
-        if (!child) throw new Error(`called pipeline not found: ${key}`);
+        const child = deps.loadRule(step.typeId, step.version);
+        if (!child) throw new Error(`called rule not found: ${key}`);
         state.log.push({ stepId: step.id, type: step.type, output: key });
         state.stack.push(key);
         await runSteps(deps, child.steps, task, state);
@@ -209,9 +209,9 @@ async function runSteps(
   }
 }
 
-export async function runPipeline(
+export async function runRule(
   deps: ExecutorDeps,
-  definition: PipelineDefinition,
+  definition: RuleDefinition,
   task: Task,
 ): Promise<RunResult> {
   const state: RunState = {

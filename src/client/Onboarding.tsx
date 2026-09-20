@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { Task } from "../domain/task";
-import type { Pipeline } from "../domain/pipeline";
-import { api, type TypeWithPipelines } from "./api";
+import type { Rule } from "../domain/rule";
+import { api, type TypeWithRules } from "./api";
 
 export function Onboarding({
   task,
@@ -10,14 +10,14 @@ export function Onboarding({
   onClose,
 }: {
   task: Task;
-  type: TypeWithPipelines;
+  type: TypeWithRules;
   onDone: () => Promise<void>;
   onClose: () => void;
 }) {
   const [name, setName] = useState(type.name);
   const [description, setDescription] = useState(type.description);
   const [handling, setHandling] = useState("");
-  const [draft, setDraft] = useState<Pipeline | null>(null);
+  const [draft, setDraft] = useState<Rule | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -76,7 +76,7 @@ export function Onboarding({
       {!draft ? (
         <>
           <button disabled={busy || !handling.trim()} onClick={build}>
-            {busy ? "Building pipeline…" : "Build pipeline"}
+            {busy ? "Building rule…" : "Build rule"}
           </button>
           <button
             className="secondary"
@@ -92,7 +92,7 @@ export function Onboarding({
         </>
       ) : (
         <>
-          <h3>Proposed pipeline (version {draft.version})</h3>
+          <h3>Proposed rule (version {draft.version})</h3>
           <pre>{JSON.stringify(draft.definition, null, 2)}</pre>
           <button disabled={busy} onClick={activate}>
             Activate

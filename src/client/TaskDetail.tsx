@@ -10,9 +10,9 @@ interface StepLogEntry {
   error?: string;
 }
 
-/** Context keys the pipeline writes for its own bookkeeping, not for reading. */
+/** Context keys the rule writes for its own bookkeeping, not for reading. */
 const INTERNAL_KEYS = new Set([
-  "pipelineLog",
+  "ruleLog",
   "completedAt",
   "completionNote",
   "error",
@@ -53,7 +53,7 @@ export function TaskDetail({
     }
   }
 
-  const log = (task.context.pipelineLog as StepLogEntry[] | undefined) ?? [];
+  const log = (task.context.ruleLog as StepLogEntry[] | undefined) ?? [];
   const outputs = Object.entries(task.context).filter(([key]) => !INTERNAL_KEYS.has(key));
 
   async function act(run: () => Promise<unknown>) {
@@ -99,12 +99,12 @@ export function TaskDetail({
       )}
 
       {typeof task.context.error === "string" && (
-        <p className="error">Pipeline failed: {task.context.error}</p>
+        <p className="error">Rule failed: {task.context.error}</p>
       )}
 
       {outputs.length > 0 && (
         <>
-          <h3>What the pipeline produced</h3>
+          <h3>What the rule produced</h3>
           {outputs.map(([key, value]) => (
             <div key={key} className="output">
               <strong>{key}</strong>

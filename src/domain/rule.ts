@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export type PipelineStatus = "draft" | "active" | "superseded";
+export type RuleStatus = "draft" | "active" | "superseded";
 
 const AiStep = z.object({
   id: z.string(),
@@ -35,8 +35,8 @@ const McpToolStep = z.object({
 
 /**
  * What a human should have open when they pick the task up: the source item, a
- * prepared draft, or a command that resumes the agent session the pipeline
- * already ran. Every field is templated like the rest of a pipeline.
+ * prepared draft, or a command that resumes the agent session the rule
+ * already ran. Every field is templated like the rest of a rule.
  */
 export const HandoffTargetSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("url"), label: z.string(), url: z.string() }),
@@ -61,54 +61,54 @@ const AssignStep = z.object({
   open: z.array(HandoffTargetSchema).optional(),
 });
 
-const CallPipelineStep = z.object({
+const CallRuleStep = z.object({
   id: z.string(),
-  type: z.literal("call_pipeline"),
+  type: z.literal("call_rule"),
   typeId: z.string(),
   version: z.number().int().positive(),
 });
 
-export type PipelineStep =
+export type RuleStep =
   | z.infer<typeof AiStep>
   | z.infer<typeof AgentStep>
   | z.infer<typeof McpToolStep>
   | z.infer<typeof AssignStep>
-  | z.infer<typeof CallPipelineStep>
-  | { id: string; type: "branch"; on: string; cases: Record<string, PipelineStep[]>; default?: PipelineStep[] };
+  | z.infer<typeof CallRuleStep>
+  | { id: string; type: "branch"; on: string; cases: Record<string, RuleStep[]>; default?: RuleStep[] };
 
-export const PipelineStepSchema: z.ZodType<PipelineStep> = z.lazy(() =>
+export const RuleStepSchema: z.ZodType<RuleStep> = z.lazy(() =>
   z.discriminatedUnion("type", [
     AiStep,
     AgentStep,
     McpToolStep,
     AssignStep,
-    CallPipelineStep,
+    CallRuleStep,
     z.object({
       id: z.string(),
       type: z.literal("branch"),
       on: z.string(),
-      cases: z.record(z.string(), z.array(PipelineStepSchema)),
-      default: z.array(PipelineStepSchema).optional(),
+      cases: z.record(z.string(), z.array(RuleStepSchema)),
+      default: z.array(RuleStepSchema).optional(),
     }),
   ]),
 );
 
-export const PipelineDefinitionSchema = z.object({
-  steps: z.array(PipelineStepSchema).min(1),
+export const RuleDefinitionSchema = z.object({
+  steps: z.array(RuleStepSchema).min(1),
 });
 
-export type PipelineDefinition = z.infer<typeof PipelineDefinitionSchema>;
+export type RuleDefinition = z.infer<typeof RuleDefinitionSchema>;
 
-export interface Pipeline {
+export interface Rule {
   id: string;
   typeId: string;
   version: number;
-  status: PipelineStatus;
-  definition: PipelineDefinition;
+  status: RuleStatus;
+  definition: RuleDefinition;
   createdAt: string;
 }
 
-export interface NewPipeline {
+export interface NewRule {
   typeId: string;
-  definition: PipelineDefinition;
+  definition: RuleDefinition;
 }

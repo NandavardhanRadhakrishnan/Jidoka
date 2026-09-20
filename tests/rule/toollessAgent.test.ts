@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
-import { PipelineDefinitionSchema } from "../../src/domain/pipeline";
-import { runPipeline } from "../../src/pipeline/executor";
+import { RuleDefinitionSchema } from "../../src/domain/rule";
+import { runRule } from "../../src/rule/executor";
 import { createInProcessRunner } from "../../src/agent/runner";
 import { createAgentSdkRunner } from "../../src/agent/claudeAgentSdk";
 import type { Task } from "../../src/domain/task";
@@ -23,7 +23,7 @@ const task: Task = {
 };
 
 test("an agent step may declare no tools at all", () => {
-  const definition = PipelineDefinitionSchema.parse({
+  const definition = RuleDefinitionSchema.parse({
     steps: [
       { id: "s1", type: "agent", prompt: "Review {{task.url}}", output: "review" },
       { id: "s2", type: "assign", to: "human" },
@@ -34,7 +34,7 @@ test("an agent step may declare no tools at all", () => {
 });
 
 test("a toolless agent step runs and its session reaches the handoff", async () => {
-  const definition = PipelineDefinitionSchema.parse({
+  const definition = RuleDefinitionSchema.parse({
     steps: [
       { id: "s1", type: "agent", prompt: "Review the PR at {{task.url}}", tools: [], output: "review" },
       {
@@ -49,11 +49,11 @@ test("a toolless agent step runs and its session reaches the handoff", async () 
     ],
   });
 
-  const result = await runPipeline(
+  const result = await runRule(
     {
       provider: { id: "stub", async complete() { return { text: "", toolCalls: [] }; } },
       callTool: async () => "",
-      loadPipeline: () => null,
+      loadRule: () => null,
       listTools: () => [],
       runAgent: {
         id: "fake",

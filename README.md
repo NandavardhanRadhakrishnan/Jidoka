@@ -1,19 +1,19 @@
 # Jidoka
 
 Task management that polls your sources, triages each task with AI, and runs a
-per-type pipeline you describe in plain language.
+per-type rule you describe in plain language.
 
 A task flows like this: a **source** polls a system and creates tasks → **AI triage**
 assigns a task type, proposes a new one, or asks you when it is ambiguous → if the
-type has no pipeline yet you are offered **onboarding** (and can skip it) → the type's
-**pipeline** runs (AI steps, agent steps that call MCP tools in a loop, branches) →
+type has no rule yet you are offered **onboarding** (and can skip it) → the type's
+**rule** runs (AI steps, agent steps that call MCP tools in a loop, branches) →
 the task lands on the **board**, assigned to AI or a human.
 
 ## Run it
 
 No API key needed: with `JIDOKA_AI_PROVIDER=agent-sdk`, every model call goes
 through the Claude Code CLI, so whatever that CLI is logged in as — a
-subscription included — covers triage, pipeline building and every step.
+subscription included — covers triage, rule building and every step.
 
 ```bash
 bun install
@@ -42,7 +42,7 @@ bun run dev
 
 ## Handoff: picking up a task
 
-When a pipeline assigns a task to a human, it can also say what that person should
+When a rule assigns a task to a human, it can also say what that person should
 have in front of them. The `assign` step carries an `open` list:
 
 ```json
@@ -63,7 +63,7 @@ read the diff instead of starting cold. Agent steps publish their id at
 Set `JIDOKA_TERMINAL` to launch commands instead of just copying them, e.g.
 `wt.exe -- bash -lc "{{command}}"` or `cmd.exe /c start "" cmd /k {{command}}`.
 
-> Pipelines are written by a model from task content, so command text is untrusted.
+> Rules are written by a model from task content, so command text is untrusted.
 > The server only launches a command already stored on that task's own handoff,
 > matched by label, and only in a visible terminal; there is no endpoint that runs
 > an arbitrary string, and nothing runs without a click.
@@ -83,7 +83,7 @@ a gateway or proxy instead of the provider's endpoint.
 
 ### Agent steps: API key or subscription
 
-An `agent` pipeline step runs a tool loop. Two backends run it, chosen with
+An `agent` rule step runs a tool loop. Two backends run it, chosen with
 `JIDOKA_AGENT_RUNNER`:
 
 | | `in-process` (default) | `agent-sdk` |
@@ -178,7 +178,7 @@ into Postman (it passes ids between requests for you).
 | `JIDOKA_MCP_SERVERS` | `[]` | JSON array of `{ name, command, args }` |
 
 MCP servers supply everything beyond ingestion: reading related mail, looking up
-records, writing back. Their tools are offered to `agent` pipeline steps as
+records, writing back. Their tools are offered to `agent` rule steps as
 `<server>__<tool>`.
 
 ## Build a single executable

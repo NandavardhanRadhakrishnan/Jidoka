@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import type { Task } from "../domain/task";
-import { api, type TypeWithPipelines } from "./api";
+import { api, type TypeWithRules } from "./api";
 import { Board } from "./Board";
 import { TypeConfirm } from "./TypeConfirm";
 import { Onboarding } from "./Onboarding";
@@ -11,7 +11,7 @@ import { Extensions } from "./Extensions";
 
 export function App() {
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [types, setTypes] = useState<TypeWithPipelines[]>([]);
+  const [types, setTypes] = useState<TypeWithRules[]>([]);
   const [selected, setSelected] = useState<Task | null>(null);
 
   const refresh = useCallback(async () => {

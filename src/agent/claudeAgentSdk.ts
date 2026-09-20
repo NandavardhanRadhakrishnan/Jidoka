@@ -78,7 +78,7 @@ function fromSdkToolName(sdkName: string): string | undefined {
 }
 
 /**
- * Hands the agent loop for one `agent` pipeline step to the Claude Code CLI via
+ * Hands the agent loop for one `agent` rule step to the Claude Code CLI via
  * `@anthropic-ai/claude-agent-sdk`. Subscription auth covers the whole run,
  * MCP tool calls included, instead of Jidoka's own AiProvider/API-key path.
  */

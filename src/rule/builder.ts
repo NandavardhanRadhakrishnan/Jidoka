@@ -1,15 +1,15 @@
 import type { AiProvider, ToolSpec } from "../ai/provider";
 import {
-  PipelineDefinitionSchema,
-  type PipelineDefinition,
-  type PipelineStep,
-} from "../domain/pipeline";
+  RuleDefinitionSchema,
+  type RuleDefinition,
+  type RuleStep,
+} from "../domain/rule";
 import type { TaskType } from "../domain/taskType";
 import { TOOL_SEPARATOR } from "../mcp/names";
 
-export const BUILDER_SYSTEM = `You turn a plain-language description of how to handle a kind of task into a pipeline definition.
+export const BUILDER_SYSTEM = `You turn a plain-language description of how to handle a kind of task into a rule definition.
 
-The pipeline runs automatically for every task of its type. Reply with JSON only:
+The rule runs automatically for every task of its type. Reply with JSON only:
 { "steps": [ ... ] }
 
 Step shapes:
@@ -31,9 +31,9 @@ Rules:
 - Use an "ai" step for a single self-contained judgement (summarize, classify, draft) over what the task already contains.
 - Use an "agent" step when gathering context needs an unknown number of lookups — "read the related mails", "find the matching order" — and list exactly the tools it may use, or when the point is to leave a session a human will resume, in which case the tools list may be empty.
 - Use an "mcp_tool" step when the exact call is known in advance.
-- When assigning to a human, add handoff targets so they do not have to go hunting: the source item's URL when the task has one, any draft the pipeline produced, and a session target for an agent step whose conversation is worth resuming (its id is at "<that step's output>_session").
-- Step ids are unique within the pipeline.
-- Every pipeline ends on an assign step in every branch — a task must never finish unassigned.
+- When assigning to a human, add handoff targets so they do not have to go hunting: the source item's URL when the task has one, any draft the rule produced, and a session target for an agent step whose conversation is worth resuming (its id is at "<that step's output>_session").
+- Step ids are unique within the rule.
+- Every rule ends on an assign step in every branch — a task must never finish unassigned.
 - Only use mcp_tool steps for tools listed as available; use the exact server and tool names given.
 - When a step branches on an AI classification, make the ai step's prompt state the exact allowed output values, and use those values as the branch case keys.`;
 
@@ -66,7 +66,7 @@ Available MCP tools:
 ${toolCatalog(input.tools)}`;
 }
 
-function collectSteps(steps: PipelineStep[]): PipelineStep[] {
+function collectSteps(steps: RuleStep[]): RuleStep[] {
   return steps.flatMap((step) =>
     step.type === "branch"
       ? [step, ...collectSteps([...Object.values(step.cases).flat(), ...(step.default ?? [])])]
@@ -74,7 +74,7 @@ function collectSteps(steps: PipelineStep[]): PipelineStep[] {
   );
 }
 
-function validateReferences(definition: PipelineDefinition, tools: ToolSpec[]): string[] {
+function validateReferences(definition: RuleDefinition, tools: ToolSpec[]): string[] {
   const available = new Set(tools.map((t) => t.name));
   const problems: string[] = [];
   const seen = new Set<string>();
@@ -99,7 +99,7 @@ function validateReferences(definition: PipelineDefinition, tools: ToolSpec[]): 
     }
   }
 
-  const endsAssigned = (steps: PipelineStep[]): boolean => {
+  const endsAssigned = (steps: RuleStep[]): boolean => {
     const last = steps.at(-1);
     if (!last) return false;
     if (last.type === "assign") return true;
@@ -110,16 +110,16 @@ function validateReferences(definition: PipelineDefinition, tools: ToolSpec[]): 
     return false;
   };
   if (!endsAssigned(definition.steps)) {
-    problems.push("the pipeline must end on an assign step in every branch");
+    problems.push("the rule must end on an assign step in every branch");
   }
 
   return problems;
 }
 
-export async function buildPipeline(
+export async function buildRule(
   provider: AiProvider,
   input: BuildInput,
-): Promise<PipelineDefinition> {
+): Promise<RuleDefinition> {
   let feedback = "";
 
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -134,7 +134,7 @@ Fix it and reply with corrected JSON only.`;
       maxTokens: 8000,
     });
 
-    const parsed = PipelineDefinitionSchema.safeParse(extractJson(result.text));
+    const parsed = RuleDefinitionSchema.safeParse(extractJson(result.text));
     if (!parsed.success) {
       feedback = parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ");
       continue;
@@ -149,7 +149,7 @@ Fix it and reply with corrected JSON only.`;
     return parsed.data;
   }
 
-  throw new Error(`pipeline builder failed after a retry: ${feedback}`);
+  throw new Error(`rule builder failed after a retry: ${feedback}`);
 }
 
 function extractJson(text: string): unknown {

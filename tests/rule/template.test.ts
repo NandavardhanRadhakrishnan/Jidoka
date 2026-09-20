@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { renderTemplate, renderInput } from "../../src/pipeline/template";
+import { renderTemplate, renderInput } from "../../src/rule/template";
 
 const scope = {
   task: { title: "Where is my order?", body: "Not arrived", metadata: { from: "a@b.com" } },

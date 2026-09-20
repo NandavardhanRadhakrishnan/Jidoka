@@ -39,7 +39,7 @@ function subscriptionEnv(): Record<string, string> {
 /**
  * One-shot text completion through the Claude Code CLI.
  *
- * Triage, the pipeline builder and `ai` steps only need "prompt in, text out", so
+ * Triage, the rule builder and `ai` steps only need "prompt in, text out", so
  * they can run on whatever the CLI is logged in as — a subscription included —
  * instead of an API key. Tool loops do not belong here: an `agent` step goes
  * through the Agent SDK runner, which lets the CLI drive MCP tools itself.

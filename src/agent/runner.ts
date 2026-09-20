@@ -28,7 +28,7 @@ export interface AgentRunResult {
 }
 
 /**
- * Runs one open-ended agent turn-loop for an `agent` pipeline step.
+ * Runs one open-ended agent turn-loop for an `agent` rule step.
  *
  * Two backends implement this: the in-process loop below, which drives an
  * AiProvider and Jidoka's own MCP client (API-key auth), and the Claude Agent SDK

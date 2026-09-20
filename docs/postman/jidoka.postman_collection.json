@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Jidoka",
-    "description": "Try Jidoka end to end: inject a task, watch AI triage discover a task type, onboard that type by describing how it should be handled, activate the generated pipeline, and see the waiting task get processed.\n\nStart the server first:\n\n    export ANTHROPIC_API_KEY=sk-ant-...\n    export JIDOKA_SAMPLE_DIR=./samples\n    bun run dev\n\nRun the requests in order. Each one stores the ids the next request needs in collection variables (taskId, typeId, pipelineId), so you can just keep clicking Send.",
+    "description": "Try Jidoka end to end: inject a task, watch AI triage discover a task type, onboard that type by describing how it should be handled, activate the generated rule, and see the waiting task get processed.\n\nStart the server first:\n\n    export ANTHROPIC_API_KEY=sk-ant-...\n    export JIDOKA_SAMPLE_DIR=./samples\n    bun run dev\n\nRun the requests in order. Each one stores the ids the next request needs in collection variables (taskId, typeId, ruleId), so you can just keep clicking Send.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -9,7 +9,7 @@
     { "key": "taskId", "value": "", "type": "string" },
     { "key": "typeId", "value": "", "type": "string" },
     { "key": "otherTypeId", "value": "", "type": "string" },
-    { "key": "pipelineId", "value": "", "type": "string" }
+    { "key": "ruleId", "value": "", "type": "string" }
   ],
   "item": [
     {
@@ -110,7 +110,7 @@
                   "const { types } = pm.response.json();",
                   "if (types[0]) pm.collectionVariables.set('typeId', types[0].id);",
                   "if (types[1]) pm.collectionVariables.set('otherTypeId', types[1].id);",
-                  "console.log(types.map((t) => `${t.status} ${t.name} — pipeline ${t.activePipelineId ?? 'none'}`).join('\\n'));"
+                  "console.log(types.map((t) => `${t.status} ${t.name} — rule ${t.activeRuleId ?? 'none'}`).join('\\n'));"
                 ]
               }
             }
@@ -118,7 +118,7 @@
           "request": {
             "method": "GET",
             "url": { "raw": "{{baseUrl}}/api/types", "host": ["{{baseUrl}}"], "path": ["api", "types"] },
-            "description": "The type registry that triage classifies against. Each type carries its name, description, example tasks, status (proposed / active), its active pipeline id, and every pipeline version built for it.\n\nStores the first type in {{typeId}} and the second in {{otherTypeId}}."
+            "description": "The type registry that triage classifies against. Each type carries its name, description, example tasks, status (proposed / active), its active rule id, and every rule version built for it.\n\nStores the first type in {{typeId}} and the second in {{otherTypeId}}."
           }
         },
         {
@@ -132,7 +132,7 @@
               "path": ["api", "tasks", "{{taskId}}", "type"]
             },
             "body": { "mode": "raw", "raw": "{\n  \"typeId\": \"{{typeId}}\"\n}" },
-            "description": "Use this for a task sitting in `needs_type_confirmation`. The task's title is saved as an example on the chosen type, so triage classifies better next time, and the task continues: it runs the type's pipeline, or waits for onboarding if there isn't one."
+            "description": "Use this for a task sitting in `needs_type_confirmation`. The task's title is saved as an example on the chosen type, so triage classifies better next time, and the task continues: it runs the type's rule, or waits for onboarding if there isn't one."
           }
         },
         {
@@ -172,7 +172,7 @@
       "name": "3 · Onboarding a type",
       "item": [
         {
-          "name": "Build a pipeline from a description",
+          "name": "Build a rule from a description",
           "event": [
             {
               "listen": "test",
@@ -180,11 +180,11 @@
                 "type": "text/javascript",
                 "exec": [
                   "const body = pm.response.json();",
-                  "if (body.pipeline) {",
-                  "  pm.collectionVariables.set('pipelineId', body.pipeline.id);",
-                  "  console.log(JSON.stringify(body.pipeline.definition, null, 2));",
+                  "if (body.rule) {",
+                  "  pm.collectionVariables.set('ruleId', body.rule.id);",
+                  "  console.log(JSON.stringify(body.rule.definition, null, 2));",
                   "}",
-                  "pm.test('a draft pipeline was built', () => pm.expect(pm.response.code).to.eql(200));"
+                  "pm.test('a draft rule was built', () => pm.expect(pm.response.code).to.eql(200));"
                 ]
               }
             }
@@ -201,17 +201,17 @@
               "mode": "raw",
               "raw": "{\n  \"description\": \"Summarize what the customer is asking in two sentences. Then decide whether this is a simple status question or a complaint: label it 'status' or 'complaint'. Status questions go to AI, complaints go to a human with the summary attached.\"\n}"
             },
-            "description": "An AI agent turns your plain-language description into a pipeline definition and saves it as a DRAFT (nothing runs yet). The response body contains the full definition — read it before activating.\n\nSteps it can emit: `ai` (one prompt), `agent` (loops over MCP tools until done), `mcp_tool` (one known call), `branch` (on an earlier step's output), `assign` (ai or human), `call_pipeline`.\n\nIt refuses definitions that use tools you don't have or that can end without assigning the task. 502 means the model failed twice.\n\nNote: `agent` and `mcp_tool` steps only appear if MCP servers are configured via JIDOKA_MCP_SERVERS."
+            "description": "An AI agent turns your plain-language description into a rule definition and saves it as a DRAFT (nothing runs yet). The response body contains the full definition — read it before activating.\n\nSteps it can emit: `ai` (one prompt), `agent` (loops over MCP tools until done), `mcp_tool` (one known call), `branch` (on an earlier step's output), `assign` (ai or human), `call_rule`.\n\nIt refuses definitions that use tools you don't have or that can end without assigning the task. 502 means the model failed twice.\n\nNote: `agent` and `mcp_tool` steps only appear if MCP servers are configured via JIDOKA_MCP_SERVERS."
           }
         },
         {
-          "name": "Review the draft pipeline",
+          "name": "Review the draft rule",
           "request": {
             "method": "GET",
             "url": {
-              "raw": "{{baseUrl}}/api/pipelines/{{pipelineId}}",
+              "raw": "{{baseUrl}}/api/rules/{{ruleId}}",
               "host": ["{{baseUrl}}"],
-              "path": ["api", "pipelines", "{{pipelineId}}"]
+              "path": ["api", "rules", "{{ruleId}}"]
             },
             "description": "The stored definition, version and status (draft / active / superseded)."
           }
@@ -225,7 +225,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "const body = pm.response.json();",
-                  "pm.test('pipeline is active', () => pm.expect(body.pipeline.status).to.eql('active'));",
+                  "pm.test('rule is active', () => pm.expect(body.rule.status).to.eql('active'));",
                   "console.log('now fetch GET /api/tasks — tasks of this type have been processed');"
                 ]
               }
@@ -234,11 +234,11 @@
           "request": {
             "method": "POST",
             "url": {
-              "raw": "{{baseUrl}}/api/pipelines/{{pipelineId}}/activate",
+              "raw": "{{baseUrl}}/api/rules/{{ruleId}}/activate",
               "host": ["{{baseUrl}}"],
-              "path": ["api", "pipelines", "{{pipelineId}}", "activate"]
+              "path": ["api", "rules", "{{ruleId}}", "activate"]
             },
-            "description": "Publishes the draft, marks the type active, and immediately runs it over every task of that type still sitting in `needs_onboarding`. Any previously active version becomes `superseded`.\n\nAfter this, GET /api/tasks shows those tasks in assigned_ai / assigned_human, with the pipeline's output in `context` and its step log in `context.pipelineLog`."
+            "description": "Publishes the draft, marks the type active, and immediately runs it over every task of that type still sitting in `needs_onboarding`. Any previously active version becomes `superseded`.\n\nAfter this, GET /api/tasks shows those tasks in assigned_ai / assigned_human, with the rule's output in `context` and its step log in `context.ruleLog`."
           }
         },
         {
@@ -250,13 +250,13 @@
               "host": ["{{baseUrl}}"],
               "path": ["api", "tasks", "{{taskId}}", "skip-onboarding"]
             },
-            "description": "The escape hatch: hand this task to a human as-is, without building a pipeline. The type stays `proposed`, so you can onboard it later."
+            "description": "The escape hatch: hand this task to a human as-is, without building a rule. The type stays `proposed`, so you can onboard it later."
           }
         }
       ]
     },
     {
-      "name": "4 · After a pipeline has run",
+      "name": "4 · After a rule has run",
       "item": [
         {
           "name": "Inject another task of the same kind",
@@ -283,7 +283,7 @@
               "mode": "raw",
               "raw": "{\n  \"title\": \"Order 5190 still not delivered\",\n  \"body\": \"Two weeks now and no parcel. This is the second time this has happened and I would like a refund.\",\n  \"metadata\": { \"from\": \"another.customer@example.com\" }\n}"
             },
-            "description": "The payoff: this one is triaged into the existing type and its pipeline runs end to end with no interaction. The response shows the final state, the assignee the pipeline chose, and everything the steps wrote into `context`."
+            "description": "The payoff: this one is triaged into the existing type and its rule runs end to end with no interaction. The response shows the final state, the assignee the rule chose, and everything the steps wrote into `context`."
           }
         },
         {
@@ -291,7 +291,7 @@
           "request": {
             "method": "GET",
             "url": { "raw": "{{baseUrl}}/api/tasks", "host": ["{{baseUrl}}"], "path": ["api", "tasks"] },
-            "description": "Confirm the board: processed tasks carry `assignee`, `context` (step outputs) and `context.pipelineLog` (which steps ran). A task in `failed` has `context.error`."
+            "description": "Confirm the board: processed tasks carry `assignee`, `context` (step outputs) and `context.ruleLog` (which steps ran). A task in `failed` has `context.error`."
           }
         }
       ]

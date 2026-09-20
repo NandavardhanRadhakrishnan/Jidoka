@@ -167,16 +167,16 @@ test("GET /api/tasks returns tasks", async () => {
   expect(body.tasks.map((t) => t.title)).toEqual(["One"]);
 });
 
-test("GET /api/types returns types with their active pipeline", async () => {
+test("GET /api/types returns types with their active rule", async () => {
   const { deps, fetch } = app();
   insertTaskType(deps.db, { name: "Customer email", description: "d" });
 
   const body = (await (await fetch(new Request("http://localhost/api/types"))).json()) as {
-    types: { name: string; activePipelineId: string | null }[];
+    types: { name: string; activeRuleId: string | null }[];
   };
 
   expect(body.types).toEqual([
-    expect.objectContaining({ name: "Customer email", activePipelineId: null }),
+    expect.objectContaining({ name: "Customer email", activeRuleId: null }),
   ]);
 });
 
@@ -199,7 +199,7 @@ test("POST /api/tasks/:id/type confirms an ambiguous task", async () => {
   expect(body.task.state).toBe("needs_onboarding");
 });
 
-test("POST /api/types/:id/onboard builds a draft pipeline and activate publishes it", async () => {
+test("POST /api/types/:id/onboard builds a draft rule and activate publishes it", async () => {
   const { deps, fetch } = app([
     JSON.stringify({
       steps: [
@@ -218,19 +218,19 @@ test("POST /api/types/:id/onboard builds a draft pipeline and activate publishes
         body: JSON.stringify({ description: "Summarize then hand to a human" }),
       }),
     )
-  ).json()) as { pipeline: { id: string; status: string } };
+  ).json()) as { rule: { id: string; status: string } };
 
-  expect(draft.pipeline.status).toBe("draft");
+  expect(draft.rule.status).toBe("draft");
 
   const activated = (await (
     await fetch(
-      new Request(`http://localhost/api/pipelines/${draft.pipeline.id}/activate`, {
+      new Request(`http://localhost/api/rules/${draft.rule.id}/activate`, {
         method: "POST",
       }),
     )
-  ).json()) as { pipeline: { status: string } };
+  ).json()) as { rule: { status: string } };
 
-  expect(activated.pipeline.status).toBe("active");
+  expect(activated.rule.status).toBe("active");
 
   // Waiting tasks are processed after the response, so the route must not block.
   await Bun.sleep(10);
