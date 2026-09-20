@@ -28,6 +28,7 @@ export interface CompleteRequest {
   messages: AiMessage[];
   tools?: ToolSpec[];
   maxTokens?: number;
+  model?: string;
 }
 
 export interface AiResult {

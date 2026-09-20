@@ -99,3 +99,15 @@ test("an error result and a missing result both throw", async () => {
     /no result message/,
   );
 });
+
+test("a per-request model overrides the provider's configured default", async () => {
+  const seen: { options?: Record<string, unknown> } = {};
+  const provider = createAgentSdkProvider({
+    model: "claude-sonnet-5",
+    queryFn: fakeQuery([success], seen),
+  });
+
+  await provider.complete({ messages: [{ role: "user", content: "x" }], model: "claude-opus-5" });
+
+  expect(seen.options?.model).toBe("claude-opus-5");
+});

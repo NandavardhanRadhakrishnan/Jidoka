@@ -68,7 +68,7 @@ export function createAnthropicProvider(options: AnthropicOptions = {}): AiProvi
 
       const client = await clientFor();
       const response = await client.messages.create({
-        model,
+        model: req.model ?? model,
         max_tokens: req.maxTokens ?? 16000,
         ...(req.system ? { system: req.system } : {}),
         ...(req.tools?.length

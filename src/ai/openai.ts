@@ -32,7 +32,7 @@ export function createOpenAiProvider(options: OpenAiOptions = {}): AiProvider {
       }
 
       const response = await client.chat.completions.create({
-        model,
+        model: req.model ?? model,
         max_completion_tokens: req.maxTokens ?? 16000,
         messages,
         ...(req.tools?.length

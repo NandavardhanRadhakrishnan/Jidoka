@@ -75,7 +75,8 @@ export function createAgentSdkProvider(options: AgentSdkProviderOptions = {}): A
         env: subscriptionEnv(),
       };
       if (req.system) queryOptions.systemPrompt = req.system;
-      if (options.model) queryOptions.model = options.model;
+      const model = req.model ?? options.model;
+      if (model) queryOptions.model = model;
       if (options.maxBudgetUsd) queryOptions.maxBudgetUsd = options.maxBudgetUsd;
 
       let result: ResultMessage | null = null;
