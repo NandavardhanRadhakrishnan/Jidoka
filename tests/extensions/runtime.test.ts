@@ -193,6 +193,39 @@ test("loadOneExtensionSource loads a single extension regardless of its enabled 
   expect((await source.poll(null)).cursor).toBe("solo-cursor");
 });
 
+test("loadOneExtensionSource cache-busts by mtime: approving a Fix overwrites source.ts in place, and the very next load reflects the new code without a process restart", async () => {
+  const db = freshDb();
+  const dir = await freshDir();
+  extensions.upsertValid(db, manifest("fixable"));
+  await writeSource(
+    dir,
+    "fixable",
+    `export function createSource() {
+      return { async poll() { return { items: [], cursor: "v1-cursor" }; } };
+    }`,
+  );
+  const vault = createVault({ db });
+
+  const first = await loadOneExtensionSource(db, dir, vault, "fixable");
+  expect((await first.poll(null)).cursor).toBe("v1-cursor");
+
+  // Mimic approve()'s exact sequence for a "fix": the same source.ts path is
+  // overwritten in place with corrected content. A naive "import the stable
+  // path" implementation would have Bun's module cache return the v1 module
+  // forever from here on — this is exactly the bug the reviewer verified.
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  await writeSource(
+    dir,
+    "fixable",
+    `export function createSource() {
+      return { async poll() { return { items: [], cursor: "v2-cursor" }; } };
+    }`,
+  );
+
+  const second = await loadOneExtensionSource(db, dir, vault, "fixable");
+  expect((await second.poll(null)).cursor).toBe("v2-cursor");
+});
+
 test("loadOneExtensionSource throws for an unknown id", async () => {
   const db = freshDb();
   const dir = await freshDir();

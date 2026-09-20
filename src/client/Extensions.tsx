@@ -146,6 +146,13 @@ export function Extensions() {
   async function generate() {
     setError(null);
     setGenerating(true);
+    if (draft) {
+      try {
+        await api.discardGeneration(draft.generationId);
+      } catch {
+        // best-effort cleanup of the draft being replaced
+      }
+    }
     try {
       const result = await api.generateExtension(description);
       setDraft(result);
@@ -197,6 +204,13 @@ export function Extensions() {
     const result = testResults[id];
     if (!result || !("error" in result)) return;
     setError(null);
+    if (draft) {
+      try {
+        await api.discardGeneration(draft.generationId);
+      } catch {
+        // best-effort cleanup of the draft being replaced
+      }
+    }
     try {
       const draftResult = await api.fixExtension(id, result.error);
       setDraft(draftResult);

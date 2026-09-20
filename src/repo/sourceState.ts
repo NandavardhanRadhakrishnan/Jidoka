@@ -13,3 +13,7 @@ export function setCursor(db: Database, sourceId: string, cursor: string | null)
      ON CONFLICT (source_id) DO UPDATE SET cursor = excluded.cursor`,
   ).run(sourceId, cursor);
 }
+
+export function removeCursor(db: Database, sourceId: string): void {
+  db.query("DELETE FROM source_state WHERE source_id = ?").run(sourceId);
+}

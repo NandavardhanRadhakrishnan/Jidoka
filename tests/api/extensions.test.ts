@@ -8,7 +8,7 @@ import { discoverExtensions } from "../../src/extensions/discovery";
 import { createExtensionRoutes } from "../../src/api/extensions";
 import type { HttpFetch } from "../../src/vault/deviceCode";
 import type { AgentRunner } from "../../src/agent/runner";
-import { getCursor } from "../../src/repo/sourceState";
+import { getCursor, setCursor } from "../../src/repo/sourceState";
 import { listTasks } from "../../src/repo/tasks";
 
 async function freshDir(): Promise<string> {
@@ -675,6 +675,31 @@ test("delete removes the credential, the db row, and the on-disk folder", async 
   expect(afterRescan.extensions).toEqual([]);
 });
 
+test("delete removes the polling cursor, so a reinstalled extension under the same id doesn't inherit a stale one", async () => {
+  const { fetch, dir, db } = await setup();
+  await writeManifest(dir, "notion", apiKeyManifest);
+  await discoverExtensions(db, dir);
+  await fetch(
+    new Request("http://localhost/api/extensions/notion/connect/api-key", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ apiKey: "k" }),
+    }),
+  );
+
+  // Simulate a real prior poll having stored a cursor (test-poll deliberately
+  // does not store one, so we do it directly).
+  setCursor(db, "notion", "some-prior-cursor");
+  expect(getCursor(db, "notion")).toBe("some-prior-cursor");
+
+  const response = await fetch(
+    new Request("http://localhost/api/extensions/notion/delete", { method: "POST" }),
+  );
+  expect(await response.json()).toEqual({ deleted: true });
+
+  expect(getCursor(db, "notion")).toBeNull();
+});
+
 test("delete of an unknown extension is a 404", async () => {
   const { fetch } = await setup();
   const response = await fetch(
@@ -758,4 +783,112 @@ test("fix on an unknown extension is a 404", async () => {
     }),
   );
   expect(response.status).toBe(404);
+});
+
+test("approving a fix that changes auth.mode disconnects the stale credential, falling back to not_connected", async () => {
+  const fixedManifest = {
+    ...apiKeyManifest,
+    auth: {
+      mode: "oauth2-auth-code-pkce",
+      authorizeUrl: "https://example.com/authorize",
+      tokenUrl: "https://example.com/token",
+      clientId: "client-1",
+      scopes: ["read"],
+    },
+  };
+  const fixedSource = `export function createSource() {
+    return { async poll(cursor) { return { items: [], cursor }; } };
+  }`;
+  const runAgent: AgentRunner = {
+    id: "stub",
+    async run() {
+      return { text: fencedReply(fixedManifest, fixedSource), toolCalls: [] };
+    },
+  };
+
+  const { fetch, dir, db } = await setup({ runAgent });
+  await writeManifest(dir, "notion", apiKeyManifest);
+  await mkdir(join(dir, "notion"), { recursive: true });
+  await writeFile(
+    join(dir, "notion", "source.ts"),
+    `export function createSource() { return { async poll() { throw new Error("needs oauth"); } }; }`,
+  );
+  await discoverExtensions(db, dir);
+  await fetch(
+    new Request("http://localhost/api/extensions/notion/connect/api-key", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ apiKey: "k" }),
+    }),
+  );
+
+  const fixResponse = await fetch(
+    new Request("http://localhost/api/extensions/notion/fix", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ error: "needs oauth" }),
+    }),
+  );
+  const { generationId } = (await fixResponse.json()) as { generationId: string };
+
+  const approved = await fetch(
+    new Request(`http://localhost/api/extensions/generate/${generationId}/approve`, {
+      method: "POST",
+    }),
+  );
+  expect(approved.status).toBe(200);
+
+  const list = (await (await fetch(new Request("http://localhost/api/extensions"))).json()) as {
+    extensions: { id: string; status: string }[];
+  };
+  expect(list.extensions.find((e) => e.id === "notion")?.status).toBe("not_connected");
+});
+
+test("approving a fix that keeps the same auth.mode leaves an existing connection intact", async () => {
+  const fixedSource = `export function createSource() {
+    return { async poll(cursor) { return { items: [], cursor }; } };
+  }`;
+  const runAgent: AgentRunner = {
+    id: "stub",
+    async run() {
+      return { text: fencedReply(apiKeyManifest, fixedSource), toolCalls: [] };
+    },
+  };
+
+  const { fetch, dir, db } = await setup({ runAgent });
+  await writeManifest(dir, "notion", apiKeyManifest);
+  await mkdir(join(dir, "notion"), { recursive: true });
+  await writeFile(
+    join(dir, "notion", "source.ts"),
+    `export function createSource() { return { async poll() { throw new Error("bad url"); } }; }`,
+  );
+  await discoverExtensions(db, dir);
+  await fetch(
+    new Request("http://localhost/api/extensions/notion/connect/api-key", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ apiKey: "k" }),
+    }),
+  );
+
+  const fixResponse = await fetch(
+    new Request("http://localhost/api/extensions/notion/fix", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ error: "bad url" }),
+    }),
+  );
+  const { generationId } = (await fixResponse.json()) as { generationId: string };
+
+  const approved = await fetch(
+    new Request(`http://localhost/api/extensions/generate/${generationId}/approve`, {
+      method: "POST",
+    }),
+  );
+  expect(approved.status).toBe(200);
+
+  const list = (await (await fetch(new Request("http://localhost/api/extensions"))).json()) as {
+    extensions: { id: string; status: string }[];
+  };
+  expect(list.extensions.find((e) => e.id === "notion")?.status).toBe("connected");
 });

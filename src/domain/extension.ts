@@ -31,7 +31,7 @@ export type ExtensionAuth = z.infer<typeof ExtensionAuthSchema>;
 export type AuthMode = ExtensionAuth["mode"];
 
 export const ExtensionManifestSchema = z.object({
-  id: z.string().min(1),
+  id: z.string().regex(/^[a-z0-9][a-z0-9-]*$/, "id must be lowercase kebab-case"),
   name: z.string().min(1),
   version: z.string().min(1),
   /** Plain-language capability summary, shown in the onboarding wizard's review step. */

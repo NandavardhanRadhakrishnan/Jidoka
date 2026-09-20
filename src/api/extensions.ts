@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, copyFile, rm, stat, writeFile, readFile } from "node:fs
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as extensionsRepo from "../repo/extensions";
+import { removeCursor } from "../repo/sourceState";
 import { discoverExtensions } from "../extensions/discovery";
 import { loadOneExtensionSource } from "../extensions/runtime";
 import { generateExtension, type GeneratedExtension } from "../extensions/generator";
@@ -137,6 +138,12 @@ export function createExtensionRoutes(deps: ExtensionRoutesDeps): Hono {
       }
     }
 
+    // Capture the currently-installed auth mode before overwriting the manifest:
+    // a "fix" may have changed auth.mode, which would otherwise leave a stale
+    // credential (stored under the old mode) reporting "connected" forever.
+    const previousAuthMode =
+      entry.mode === "fix" ? extensionsRepo.get(deps.db, entry.targetId)?.auth?.mode : undefined;
+
     try {
       await mkdir(targetDir, { recursive: true });
       await copyFile(join(entry.tempDir, "manifest.json"), join(targetDir, "manifest.json"));
@@ -149,6 +156,10 @@ export function createExtensionRoutes(deps: ExtensionRoutesDeps): Hono {
     await rm(entry.tempDir, { recursive: true, force: true });
     pending.delete(generationId);
     await discoverExtensions(deps.db, deps.extensionsDir);
+
+    if (previousAuthMode !== undefined && previousAuthMode !== entry.manifest.auth.mode) {
+      deps.vault.disconnect(entry.targetId);
+    }
 
     return c.json({ extensionId: entry.targetId });
   });
@@ -296,6 +307,7 @@ export function createExtensionRoutes(deps: ExtensionRoutesDeps): Hono {
     if (!extensionsRepo.get(deps.db, id)) return c.json({ error: "unknown extension" }, 404);
     deps.vault.disconnect(id);
     extensionsRepo.remove(deps.db, id);
+    removeCursor(deps.db, id);
     await rm(join(deps.extensionsDir, id), { recursive: true, force: true });
     return c.json({ deleted: true });
   });
