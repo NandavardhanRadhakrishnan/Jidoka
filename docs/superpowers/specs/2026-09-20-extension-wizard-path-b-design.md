@@ -14,7 +14,7 @@ Explicitly out of scope:
 1. **Persisting or tracking generation provenance.** Nothing records "this extension was agent-generated" vs. hand-written, and nothing stores the original description after generation. Fix works by reading the *current* `manifest.json`/`source.ts` off disk plus a fresh error, not by remembering history — this is deliberate (see Approaches below), not a corner cut.
 2. **A general "edit this extension via natural language" feature.** Fix is scoped specifically to "the last test-poll failed with this error, repair it" — not an open-ended regenerate/improve command.
 3. **Enforcing Test before Activate.** Test is available and the UI's flow strongly suggests Connect → Test → Activate, but `enable`'s existing precondition (`status === "connected"`) is unchanged — nothing new is stored to hard-block activating an untested extension.
-4. **The manifest's `config` field, pruning, hot-reload** — all still deferred from earlier plans, unaffected by this one.
+4. **The manifest's `config` field, pruning** — still deferred from earlier plans, unaffected by this one. Hot-reload is **not** independent of this plan the way it first appeared: Bun caches an imported module by resolved file path, so overwriting `source.ts` on disk (which is exactly what an approved Fix does) has no effect on a process that already imported it, until restart — the same limitation the poller-wiring plan accepted for a manual edit applies just as much to Fix's own overwrite. `loadOneExtensionSource` cache-busts by importing a copy keyed to the file's mtime instead of the stable path, specifically so Fix's own write-then-reload loop works within a single running process — this is the minimum needed to make Fix functional at all, not a general hot-reload feature.
 
 ## Generation
 
@@ -54,7 +54,7 @@ For a **fix**, the prompt instead includes the current manifest and source verba
 **Validation, retried with feedback exactly like `buildPipeline` (up to 2 attempts):**
 1. Both fenced blocks present — missing either is a retry-triggering failure.
 2. Manifest parsed with `ExtensionManifestSchema.safeParse` — issues fed back verbatim.
-3. `source.ts` written to a temp file and dynamically `import()`ed — reusing the same failure-detection `src/extensions/runtime.ts` already does: confirms `createSource` is exported and calling it with a stubbed `{getToken: async () => "stub-token"}` returns an object whose `poll` is a function. `poll()` itself is never invoked during this check — no real network call happens before a human has seen anything.
+3. `source.ts` written to a temp file and dynamically `import()`ed — reusing the same failure-detection `src/extensions/runtime.ts` already does: confirms `createSource` is exported and calling it with a stubbed `{getToken: async () => "stub-token"}` returns an object whose `poll` is a function. `poll()` itself is never invoked during this check. This bounds but does not eliminate what runs before a human reviews anything: the module's top-level statements and the `createSource()` factory body do execute in-process, with the same privileges as the rest of Jidoka (env vars, the sqlite file, network) — only `poll()`'s own network call is deferred past the review gate. Extension code has never been sandboxed (see the vault plan); this check narrows the pre-review execution surface, it doesn't close it.
 
 If both attempts fail, the caller (the route) reports the last feedback message as the error; nothing is staged.
 
