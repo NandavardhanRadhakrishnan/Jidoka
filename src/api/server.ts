@@ -1,8 +1,9 @@
 import { Hono, type Context } from "hono";
 import { modelCatalog } from "../ai/models";
+import { RuleDefinitionSchema } from "../domain/rule";
 import { findTaskBySource, getTask, insertTask, listTasks } from "../repo/tasks";
 import { getTaskType, listTaskTypes, mergeTaskType, updateTaskType } from "../repo/taskTypes";
-import { getActiveRule, getRule, listRules } from "../repo/rules";
+import { getActiveRule, getRule, insertRule, listRules } from "../repo/rules";
 import {
   activateTypeRule,
   completeTask,
@@ -160,6 +161,25 @@ export function createServer(deps: AppDeps, extraRoutes?: Hono): Hono {
     if (!getRule(deps.db, id)) return c.json({ error: "unknown rule" }, 404);
     // Waiting tasks are processed after the response; the board shows them move.
     return c.json({ rule: await activateTypeRule(deps, id, { background: true }) });
+  });
+
+  app.get("/api/mcp/tools", (c) => c.json({ tools: deps.mcp.listTools() }));
+
+  app.post("/api/types/:id/rules", async (c) => {
+    const id = c.req.param("id");
+    if (!getTaskType(deps.db, id)) return c.json({ error: "unknown type" }, 404);
+    const input = await readJson<{ definition?: unknown }>(c);
+    if (!input?.definition) return c.json({ error: "definition is required" }, 400);
+
+    const parsed = RuleDefinitionSchema.safeParse(input.definition);
+    if (!parsed.success) {
+      return c.json(
+        { error: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") },
+        400,
+      );
+    }
+
+    return c.json({ rule: insertRule(deps.db, { typeId: id, definition: parsed.data }) });
   });
 
   return app;

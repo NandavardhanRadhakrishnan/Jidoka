@@ -262,3 +262,63 @@ test("GET /api/models returns the configured provider's catalog", async () => {
   expect(body.provider).toBe("anthropic");
   expect(body.models.map((m) => m.id)).toContain("claude-sonnet-5");
 });
+
+test("GET /api/mcp/tools returns the configured tool catalog", async () => {
+  const db = openDb(":memory:");
+  migrate(db);
+  const deps: AppDeps = {
+    db,
+    provider: { id: "stub", async complete() { return { text: "", toolCalls: [] }; } },
+    modelProvider: "anthropic",
+    mcp: {
+      listTools: () => [{ name: "outlook__get_thread", description: "Fetch a thread", inputSchema: { type: "object" } }],
+      callTool: async () => "",
+    },
+  };
+  const server = createServer(deps);
+
+  const body = (await (
+    await server.fetch(new Request("http://localhost/api/mcp/tools"))
+  ).json()) as { tools: { name: string }[] };
+
+  expect(body.tools.map((t) => t.name)).toEqual(["outlook__get_thread"]);
+});
+
+test("POST /api/types/:id/rules saves a hand-edited definition as a new draft version", async () => {
+  const { deps, fetch } = app();
+  const type = insertTaskType(deps.db, { name: "Customer email", description: "d" });
+
+  const response = await fetch(
+    new Request(`http://localhost/api/types/${type.id}/rules`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        definition: {
+          steps: [
+            { id: "s1", type: "ai", prompt: "Summarize {{task.body}}", output: "summary" },
+            { id: "s2", type: "assign", to: "human" },
+          ],
+        },
+      }),
+    }),
+  );
+
+  expect(response.status).toBe(200);
+  const body = (await response.json()) as { rule: { version: number; status: string } };
+  expect(body.rule).toMatchObject({ version: 1, status: "draft" });
+});
+
+test("POST /api/types/:id/rules rejects an invalid definition with 400", async () => {
+  const { deps, fetch } = app();
+  const type = insertTaskType(deps.db, { name: "Customer email", description: "d" });
+
+  const response = await fetch(
+    new Request(`http://localhost/api/types/${type.id}/rules`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ definition: { steps: [{ id: "s1", type: "teleport" }] } }),
+    }),
+  );
+
+  expect(response.status).toBe(400);
+});
