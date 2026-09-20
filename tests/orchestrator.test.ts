@@ -196,3 +196,64 @@ test("activating an onboarded rule processes the tasks that were waiting", async
   expect(processed?.state).toBe("assigned_human");
   expect(processed?.context.summary).toBe("A summary");
 });
+
+test("a task with no URL fails fast against a rule that needs {{task.url}}, without calling the model", async () => {
+  const db = freshDb();
+  const type = insertTaskType(db, { name: "PR review", description: "d" });
+  activateRule(
+    db,
+    insertRule(db, {
+      typeId: type.id,
+      definition: {
+        steps: [
+          { id: "s1", type: "ai", prompt: "Review {{task.url}}", output: "review" },
+          { id: "s2", type: "assign", to: "human" },
+        ],
+      },
+    }).id,
+  );
+  const task = insertTask(db, { ...sample, url: null });
+  let calls = 0;
+  const app: AppDeps = {
+    db,
+    provider: {
+      id: "stub",
+      async complete() {
+        calls += 1;
+        return { text: "should not run", toolCalls: [] };
+      },
+    },
+    modelProvider: "anthropic",
+    mcp: { listTools: () => [], callTool: async () => "" },
+  };
+
+  const result = await confirmTaskType(app, task.id, type.id);
+
+  expect(result.state).toBe("failed");
+  expect(String(result.context.error)).toContain("task.url");
+  expect(calls).toBe(0);
+});
+
+test("a task with a URL runs normally against a rule that needs {{task.url}}", async () => {
+  const db = freshDb();
+  const type = insertTaskType(db, { name: "PR review", description: "d" });
+  activateRule(
+    db,
+    insertRule(db, {
+      typeId: type.id,
+      definition: {
+        steps: [
+          { id: "s1", type: "ai", prompt: "Review {{task.url}}", output: "review" },
+          { id: "s2", type: "assign", to: "human" },
+        ],
+      },
+    }).id,
+  );
+  const task = insertTask(db, { ...sample, url: "https://github.com/org/repo/pull/1" });
+  const app = deps(db, ["Looks fine"]);
+
+  const result = await confirmTaskType(app, task.id, type.id);
+
+  expect(result.state).toBe("assigned_human");
+  expect(result.context.review).toBe("Looks fine");
+});
