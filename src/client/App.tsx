@@ -13,7 +13,8 @@ import { Rules } from "./Rules";
 export function App() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [types, setTypes] = useState<TypeWithRules[]>([]);
-  const [selected, setSelected] = useState<Task | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selected = selectedId ? (tasks.find((t) => t.id === selectedId) ?? null) : null;
 
   const refresh = useCallback(async () => {
     const [nextTasks, nextTypes] = await Promise.all([api.tasks(), api.types()]);
@@ -44,7 +45,7 @@ export function App() {
         </div>
       </header>
 
-      <Board tasks={tasks} onSelect={setSelected} />
+      <Board tasks={tasks} onSelect={(task) => setSelectedId(task.id)} />
 
       {selected?.state === "needs_type_confirmation" && (
         <TypeConfirm
@@ -54,7 +55,7 @@ export function App() {
             await api.confirmType(selected.id, typeId);
             await refresh();
           }}
-          onClose={() => setSelected(null)}
+          onClose={() => setSelectedId(null)}
         />
       )}
 
@@ -63,14 +64,14 @@ export function App() {
           task={selected}
           type={selectedType}
           onDone={refresh}
-          onClose={() => setSelected(null)}
+          onClose={() => setSelectedId(null)}
         />
       )}
 
       {selected &&
         selected.state !== "needs_type_confirmation" &&
         !(selected.state === "needs_onboarding" && selectedType) && (
-          <TaskDetail task={selected} onChanged={refresh} onClose={() => setSelected(null)} />
+          <TaskDetail task={selected} onChanged={refresh} onClose={() => setSelectedId(null)} />
         )}
     </main>
   );
