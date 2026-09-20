@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, type ExtensionListItem } from "./api";
+import { api, type ExtensionListItem, type GenerationDraft } from "./api";
 
 interface DeviceSession {
   id: string;
@@ -16,6 +16,12 @@ export function Extensions() {
   const [apiKeyValue, setApiKeyValue] = useState("");
   const [device, setDevice] = useState<DeviceSession | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [draft, setDraft] = useState<GenerationDraft | null>(null);
+  const [description, setDescription] = useState("");
+  const [generating, setGenerating] = useState(false);
+  const [testResults, setTestResults] = useState<
+    Record<string, { itemCount: number } | { error: string } | undefined>
+  >({});
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const refresh = useCallback(async () => {
@@ -137,6 +143,92 @@ export function Extensions() {
     }
   }
 
+  async function generate() {
+    setError(null);
+    setGenerating(true);
+    try {
+      const result = await api.generateExtension(description);
+      setDraft(result);
+      setDescription("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  async function approveDraft() {
+    if (!draft) return;
+    setError(null);
+    try {
+      await api.approveGeneration(draft.generationId);
+      setDraft(null);
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function discardDraft() {
+    if (!draft) return;
+    try {
+      await api.discardGeneration(draft.generationId);
+    } finally {
+      setDraft(null);
+    }
+  }
+
+  async function testPoll(id: string) {
+    try {
+      const result = await api.testPoll(id);
+      setTestResults((prev) => ({ ...prev, [id]: { itemCount: result.itemCount } }));
+    } catch (e) {
+      setTestResults((prev) => ({
+        ...prev,
+        [id]: { error: e instanceof Error ? e.message : String(e) },
+      }));
+    }
+  }
+
+  async function fix(id: string) {
+    const result = testResults[id];
+    if (!result || !("error" in result)) return;
+    setError(null);
+    try {
+      const draftResult = await api.fixExtension(id, result.error);
+      setDraft(draftResult);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function deleteExtension(id: string) {
+    if (!window.confirm(`Delete "${id}"? This removes it and its credentials permanently.`)) return;
+    setError(null);
+    try {
+      await api.deleteExtension(id);
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  function testResultView(id: string) {
+    const result = testResults[id];
+    if (!result) return null;
+    if ("error" in result) {
+      return (
+        <>
+          <p className="error">✗ {result.error}</p>
+          <button className="link" onClick={() => fix(id)}>
+            Fix
+          </button>
+        </>
+      );
+    }
+    return <p className="meta">✓ {result.itemCount} item(s) found</p>;
+  }
+
   function dotClass(status: ExtensionListItem["status"]): string {
     if (status === "connected") return "dot on";
     if (status === "needs_reauth") return "dot warn";
@@ -153,6 +245,36 @@ export function Extensions() {
         <div className="dialog extensions">
           <h2>Extensions</h2>
           <button onClick={rescan}>Rescan</button>
+
+          <div className="connect-form">
+            <label>
+              Describe the integration
+              <textarea
+                rows={3}
+                placeholder="e.g. Reads pages from my Notion databases"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+              />
+            </label>
+            <button disabled={generating || !description.trim()} onClick={generate}>
+              {generating ? "Generating…" : "Generate"}
+            </button>
+          </div>
+
+          {draft && (
+            <div className="extension-row">
+              <strong>{draft.manifest.name}</strong>
+              <p>{draft.manifest.summary}</p>
+              <p className="meta">
+                {draft.manifest.readOnly ? "Read-only" : "Can write"} · {draft.manifest.auth.mode}
+              </p>
+              <button onClick={approveDraft}>Approve</button>
+              <button className="secondary" onClick={discardDraft}>
+                Discard
+              </button>
+            </div>
+          )}
+
           {error && <p className="error">{error}</p>}
 
           {extensions.length === 0 && <p className="meta">No extensions discovered.</p>}
@@ -208,6 +330,18 @@ export function Extensions() {
                   Activate
                 </button>
               )}
+
+              {ext.status === "connected" && (
+                <button className="link" onClick={() => testPoll(ext.id)}>
+                  Test
+                </button>
+              )}
+
+              {testResultView(ext.id)}
+
+              <button className="link" onClick={() => deleteExtension(ext.id)}>
+                Delete
+              </button>
 
               {ext.enabled && (
                 <>

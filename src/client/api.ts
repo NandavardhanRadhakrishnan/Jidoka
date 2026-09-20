@@ -33,6 +33,19 @@ export interface ExtensionListItem {
   status: "connected" | "not_connected" | "needs_reauth" | "unknown" | "invalid";
 }
 
+export interface GeneratedManifest {
+  id: string;
+  name: string;
+  summary: string;
+  readOnly: boolean;
+  auth: ExtensionAuth;
+}
+
+export interface GenerationDraft {
+  generationId: string;
+  manifest: GeneratedManifest;
+}
+
 async function json<T>(input: string, init?: RequestInit): Promise<T> {
   const response = await fetch(input, {
     ...init,
@@ -126,4 +139,27 @@ export const api = {
     json<{ enabled: true }>(`/api/extensions/${id}/enable`, { method: "POST" }),
   disableExtension: (id: string) =>
     json<{ enabled: false }>(`/api/extensions/${id}/disable`, { method: "POST" }),
+  generateExtension: (description: string) =>
+    json<GenerationDraft>("/api/extensions/generate", {
+      method: "POST",
+      body: JSON.stringify({ description }),
+    }),
+  approveGeneration: (generationId: string) =>
+    json<{ extensionId: string }>(`/api/extensions/generate/${generationId}/approve`, {
+      method: "POST",
+    }),
+  discardGeneration: (generationId: string) =>
+    json<{ discarded: true }>(`/api/extensions/generate/${generationId}/discard`, { method: "POST" }),
+  testPoll: (id: string) =>
+    json<{ itemCount: number; sample: { externalId: string; title: string; body: string }[] }>(
+      `/api/extensions/${id}/test-poll`,
+      { method: "POST" },
+    ),
+  deleteExtension: (id: string) =>
+    json<{ deleted: true }>(`/api/extensions/${id}/delete`, { method: "POST" }),
+  fixExtension: (id: string, error: string) =>
+    json<GenerationDraft>(`/api/extensions/${id}/fix`, {
+      method: "POST",
+      body: JSON.stringify({ error }),
+    }),
 };
