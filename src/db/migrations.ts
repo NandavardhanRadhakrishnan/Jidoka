@@ -65,4 +65,8 @@ export const MIGRATIONS: string[] = [
      status TEXT NOT NULL,
      updated_at INTEGER NOT NULL
    )`,
+  `CREATE TABLE IF NOT EXISTS settings (
+     id TEXT PRIMARY KEY,
+     data TEXT NOT NULL
+   )`,
 ];
