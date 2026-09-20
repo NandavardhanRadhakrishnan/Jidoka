@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type { ModelProviderId } from "../ai/models";
 import type { McpServerConfig } from "../config";
 
@@ -26,3 +27,29 @@ export interface Settings {
   pollIntervalMs?: number;
   terminalCommand?: string;
 }
+
+export const SettingsSchema = z.object({
+  ai: z
+    .object({
+      provider: z.enum(["anthropic", "openai", "agent-sdk"]).optional(),
+      apiKey: z.string().optional(),
+      model: z.string().optional(),
+      baseUrl: z.string().optional(),
+    })
+    .optional(),
+  agent: z
+    .object({
+      runner: z.enum(["in-process", "agent-sdk"]).optional(),
+      model: z.string().optional(),
+      concurrency: z.number().int().positive().optional(),
+      maxBudgetUsd: z.number().positive().optional(),
+    })
+    .optional(),
+  mcpServers: z
+    .array(z.object({ name: z.string(), command: z.string(), args: z.array(z.string()) }))
+    .optional(),
+  sampleDir: z.string().optional(),
+  extensionsDir: z.string().optional(),
+  pollIntervalMs: z.number().int().positive().optional(),
+  terminalCommand: z.string().optional(),
+});

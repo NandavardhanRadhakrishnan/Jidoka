@@ -155,6 +155,13 @@ into Postman (it passes ids between requests for you).
 
 ## Configuration
 
+Settings saved through the Settings panel in the UI override the matching
+environment variable on a per-field basis once saved. Once a field has a
+saved setting, changing its environment variable afterward has no effect
+until that setting is cleared or changed again through the UI. Either way,
+changes only take effect on the next server restart — nothing here is
+applied live.
+
 | Variable | Default | Meaning |
 |---|---|---|
 | `JIDOKA_DB` | `./jidoka.db` | SQLite file |

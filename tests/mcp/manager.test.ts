@@ -1,4 +1,5 @@
 import { test, expect } from "bun:test";
+import path from "node:path";
 import { McpManager, type McpLike } from "../../src/mcp/manager";
 
 function fakeClient(): McpLike & { calls: unknown[] } {
@@ -72,3 +73,22 @@ test("a tool error is surfaced as a thrown error", async () => {
 
   await expect(manager.callTool("outlook", "boom", {})).rejects.toThrow(/tool exploded/);
 });
+
+test("connectAll does not reject when one server fails to connect, and still connects the others", async () => {
+  const manager = new McpManager();
+  const fixture = path.join(import.meta.dir, "fixtures", "fake-stdio-server.ts");
+  const originalConsoleError = console.error;
+  console.error = () => {};
+
+  try {
+    await manager.connectAll([
+      { name: "bad", command: "this-command-does-not-exist-xyz", args: [] },
+      { name: "good", command: process.execPath, args: ["run", fixture] },
+    ]);
+  } finally {
+    console.error = originalConsoleError;
+  }
+
+  const tools = manager.listTools();
+  expect(tools.some((t) => t.name === "good__ping")).toBe(true);
+}, 15000);

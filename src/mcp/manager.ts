@@ -25,11 +25,18 @@ export class McpManager {
 
   async connectAll(configs: McpServerConfig[]): Promise<void> {
     for (const config of configs) {
-      const client = new Client({ name: "jidoka", version: "0.1.0" });
-      await client.connect(
-        new StdioClientTransport({ command: config.command, args: config.args }),
-      );
-      this.addClient(config.name, client as unknown as McpLike);
+      try {
+        const client = new Client({ name: "jidoka", version: "0.1.0" });
+        await client.connect(
+          new StdioClientTransport({ command: config.command, args: config.args }),
+        );
+        this.addClient(config.name, client as unknown as McpLike);
+      } catch (error) {
+        console.error(
+          `[mcp] failed to connect to "${config.name}" (${config.command}):`,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
     }
     await this.refreshTools();
   }

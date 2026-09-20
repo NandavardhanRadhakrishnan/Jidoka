@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { Database } from "bun:sqlite";
 import { getSettings, saveSettings } from "../repo/settings";
-import type { Settings } from "../domain/settings";
+import { SettingsSchema, type Settings } from "../domain/settings";
 import { applySettings, type Config } from "../config";
 
 export interface SettingsRoutesDeps {
@@ -71,12 +71,20 @@ export function createSettingsRoutes(deps: SettingsRoutesDeps): Hono {
   });
 
   app.patch("/api/settings", async (c) => {
-    let patch: Settings;
+    let body: unknown;
     try {
-      patch = (await c.req.json()) as Settings;
+      body = await c.req.json();
     } catch {
       return c.json({ error: "body must be valid JSON" }, 400);
     }
+    const parsed = SettingsSchema.safeParse(body);
+    if (!parsed.success) {
+      return c.json(
+        { error: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") },
+        400,
+      );
+    }
+    const patch: Settings = parsed.data;
 
     const settings = saveSettings(deps.db, patch);
     const effective = applySettings(deps.baseConfig, settings);

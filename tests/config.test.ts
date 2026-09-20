@@ -35,3 +35,21 @@ test("applySettings never touches dbPath or port", () => {
   expect(merged.dbPath).toBe("./real.db");
   expect(merged.port).toBe(4000);
 });
+
+test("applySettings does not carry a provider's credentials over to a different provider", () => {
+  const base = loadConfig({ ANTHROPIC_API_KEY: "sk-ant-secret" });
+
+  const merged = applySettings(base, { ai: { provider: "openai" } });
+
+  expect(merged.ai.provider).toBe("openai");
+  expect(merged.ai.apiKey).toBeUndefined();
+});
+
+test("applySettings keeps a provider's credentials when the provider is unchanged", () => {
+  const base = loadConfig({ ANTHROPIC_API_KEY: "sk-ant-secret" });
+
+  const merged = applySettings(base, { ai: { model: "claude-opus-5" } });
+
+  expect(merged.ai.apiKey).toBe("sk-ant-secret");
+  expect(merged.ai.model).toBe("claude-opus-5");
+});

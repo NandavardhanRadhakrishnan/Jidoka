@@ -83,3 +83,31 @@ test("PATCH with an invalid JSON body is a 400, not a crash", async () => {
 
   expect(response.status).toBe(400);
 });
+
+test("PATCH rejects a garbage-shaped body with 400", async () => {
+  const { fetch } = freshApp();
+
+  const response = await fetch(
+    new Request("http://localhost/api/settings", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ mcpServers: "not-an-array", pollIntervalMs: "soon" }),
+    }),
+  );
+
+  expect(response.status).toBe(400);
+});
+
+test("PATCH accepts a well-formed body", async () => {
+  const { fetch } = freshApp();
+
+  const response = await fetch(
+    new Request("http://localhost/api/settings", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ pollIntervalMs: 30000, mcpServers: [{ name: "a", command: "a", args: [] }] }),
+    }),
+  );
+
+  expect(response.status).toBe(200);
+});

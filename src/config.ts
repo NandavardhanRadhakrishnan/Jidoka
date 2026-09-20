@@ -118,9 +118,12 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
 }
 
 export function applySettings(base: Config, settings: Settings): Config {
+  const provider = settings.ai?.provider ?? base.ai.provider;
+  const sameProvider = provider === base.ai.provider;
+  const baseAi = sameProvider ? base.ai : { provider: base.ai.provider, model: base.ai.model };
   return {
     ...base,
-    ai: { ...base.ai, ...settings.ai },
+    ai: { ...baseAi, ...settings.ai, provider },
     agent: { ...base.agent, ...settings.agent },
     mcpServers: settings.mcpServers ?? base.mcpServers,
     sampleDir: settings.sampleDir ?? base.sampleDir,

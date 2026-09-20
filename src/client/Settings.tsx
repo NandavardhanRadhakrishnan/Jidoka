@@ -42,21 +42,25 @@ export function Settings() {
   const [saved, setSaved] = useState(false);
 
   async function load() {
-    const { effective } = await api.settingsGet();
-    setEffective(effective);
-    setAiProvider(effective.ai.provider);
-    setAiApiKey("");
-    setAiModel(effective.ai.model ?? "");
-    setAiBaseUrl(effective.ai.baseUrl ?? "");
-    setAgentRunner(effective.agent.runner);
-    setAgentModel(effective.agent.model ?? "");
-    setAgentConcurrency(effective.agent.concurrency);
-    setAgentMaxBudget(effective.agent.maxBudgetUsd?.toString() ?? "");
-    setMcpRows(toRows(effective.mcpServers));
-    setSampleDir(effective.sampleDir ?? "");
-    setExtensionsDir(effective.extensionsDir);
-    setPollIntervalMs(effective.pollIntervalMs);
-    setTerminalCommand(effective.terminalCommand ?? "");
+    try {
+      const { effective } = await api.settingsGet();
+      setEffective(effective);
+      setAiProvider(effective.ai.provider);
+      setAiApiKey("");
+      setAiModel(effective.ai.model ?? "");
+      setAiBaseUrl(effective.ai.baseUrl ?? "");
+      setAgentRunner(effective.agent.runner);
+      setAgentModel(effective.agent.model ?? "");
+      setAgentConcurrency(effective.agent.concurrency);
+      setAgentMaxBudget(effective.agent.maxBudgetUsd?.toString() ?? "");
+      setMcpRows(toRows(effective.mcpServers));
+      setSampleDir(effective.sampleDir ?? "");
+      setExtensionsDir(effective.extensionsDir);
+      setPollIntervalMs(effective.pollIntervalMs);
+      setTerminalCommand(effective.terminalCommand ?? "");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
   }
 
   useEffect(() => {
@@ -115,7 +119,13 @@ export function Settings() {
               <h3>AI provider</h3>
               <label>
                 Provider
-                <select value={aiProvider} onChange={(e) => setAiProvider(e.target.value)}>
+                <select
+                  value={aiProvider}
+                  onChange={(e) => {
+                    setAiProvider(e.target.value);
+                    setAiModel("");
+                  }}
+                >
                   <option value="anthropic">anthropic</option>
                   <option value="openai">openai</option>
                   <option value="agent-sdk">agent-sdk</option>
