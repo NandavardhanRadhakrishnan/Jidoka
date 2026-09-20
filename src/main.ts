@@ -6,6 +6,7 @@ import { McpManager } from "./mcp/manager";
 import { createServer } from "./api/server";
 import { createAuthRoutes, getValidAccessToken } from "./api/auth";
 import { createHandoffRoutes } from "./api/handoff";
+import { createSettingsRoutes } from "./api/settings";
 import { createVault, type Vault } from "./vault/vault";
 import { createExtensionRoutes } from "./api/extensions";
 import { discoverExtensions } from "./extensions/discovery";
@@ -98,6 +99,7 @@ export function createApp(baseConfig: Config): App {
       listTools: () => mcp.listTools(),
     }),
   );
+  extraRoutes.route("/", createSettingsRoutes({ db, baseConfig }));
 
   const api = createServer(deps, extraRoutes);
 
