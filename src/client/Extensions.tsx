@@ -171,8 +171,11 @@ export function Extensions() {
 
   async function discardDraft() {
     if (!draft) return;
+    setError(null);
     try {
       await api.discardGeneration(draft.generationId);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setDraft(null);
     }
