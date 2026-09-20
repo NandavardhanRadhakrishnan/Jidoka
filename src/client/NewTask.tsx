@@ -6,6 +6,7 @@ export function NewTask({ onCreated }: { onCreated: () => Promise<void> }) {
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
+  const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -15,9 +16,10 @@ export function NewTask({ onCreated }: { onCreated: () => Promise<void> }) {
     setBusy(true);
     setError(null);
     try {
-      await api.createTask({ title, body });
+      await api.createTask({ title, body, ...(url.trim() ? { url: url.trim() } : {}) });
       setTitle("");
       setBody("");
+      setUrl("");
       setOpen(false);
       await onCreated();
     } catch (e) {
@@ -46,6 +48,14 @@ export function NewTask({ onCreated }: { onCreated: () => Promise<void> }) {
           value={body}
           placeholder="I ordered last week and nothing has arrived."
           onChange={(e) => setBody(e.target.value)}
+        />
+      </label>
+      <label>
+        URL (optional)
+        <input
+          value={url}
+          placeholder="https://github.com/org/repo/pull/123"
+          onChange={(e) => setUrl(e.target.value)}
         />
       </label>
 

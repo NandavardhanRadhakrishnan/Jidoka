@@ -73,7 +73,7 @@ export const api = {
     json<{ providers: AuthProviderStatus[] }>("/api/auth").then((r) => r.providers),
   signOut: (providerId: string) =>
     json<{ signedOut: boolean }>(`/api/auth/${providerId}/signout`, { method: "POST" }),
-  createTask: (input: { title: string; body: string }) =>
+  createTask: (input: { title: string; body: string; url?: string }) =>
     json<{ task: Task }>("/api/tasks", {
       method: "POST",
       body: JSON.stringify(input),
