@@ -315,6 +315,13 @@ textarea.input { min-height: 90px; resize: vertical; }
 .provenance-badge.provenance-note { background: transparent; border: 1px solid var(--color-divider); color: var(--color-neutral-600); }
 .provenance-badge.provenance-unknown { background: var(--color-neutral-200); color: var(--color-neutral-700); }
 
+/* — deadline urgency badge (task card meta row + drawer meta) — */
+.deadline-badge { display: inline-flex; align-items: center; gap: 3px; font-size: 9.5px; letter-spacing: 0.04em; text-transform: uppercase; padding: 1px 6px; border-radius: var(--radius-sm, 2px); flex-shrink: 0; }
+.deadline-badge.deadline-overdue { background: var(--color-accent-800); color: var(--color-bg); }
+.deadline-badge.deadline-today { background: var(--color-accent); color: var(--color-bg); }
+.deadline-badge.deadline-soon { background: var(--color-accent-100); color: var(--color-accent-800); }
+.deadline-badge.deadline-later { background: transparent; border: 1px solid var(--color-divider); color: var(--color-neutral-600); }
+
 /* — tool permission badges (agent step tool allowlist) — */
 .perm-badge { font-size: 9.5px; letter-spacing: 0.04em; text-transform: uppercase; padding: 1px 6px; border-radius: var(--radius-sm, 2px); flex-shrink: 0; }
 .perm-badge.perm-read { background: var(--color-neutral-100); color: var(--color-neutral-700); }

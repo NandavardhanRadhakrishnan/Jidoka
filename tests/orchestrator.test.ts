@@ -56,6 +56,53 @@ test("an unmatched task creates a proposed type and waits for onboarding", async
   expect(result.typeId).toBe(types[0]!.id);
 });
 
+test("a deadline mentioned in the task survives an ambiguous triage outcome", async () => {
+  const db = freshDb();
+  const a = insertTaskType(db, { name: "Customer email", description: "d" });
+  const b = insertTaskType(db, { name: "Internal request", description: "d" });
+  const task = insertTask(db, sample);
+  const app = deps(db, [
+    JSON.stringify({
+      scores: [
+        { typeId: a.id, confidence: 0.7 },
+        { typeId: b.id, confidence: 0.65 },
+      ],
+      proposal: null,
+      deadline: "2026-02-01",
+    }),
+  ]);
+
+  const result = await onTaskIngested(app, task);
+
+  expect(result.deadline).toBe("2026-02-01");
+});
+
+test("a deadline mentioned in the task survives a matched triage outcome and rule run", async () => {
+  const db = freshDb();
+  const type = insertTaskType(db, { name: "Customer email", description: "d" });
+  activateRule(
+    db,
+    insertRule(db, {
+      typeId: type.id,
+      definition: {
+        steps: [
+          { id: "s1", type: "ai", prompt: "Summarize {{task.body}}", output: "summary" },
+          { id: "s2", type: "assign", to: "human" },
+        ],
+      },
+    }).id,
+  );
+  const task = insertTask(db, sample);
+  const app = deps(db, [
+    JSON.stringify({ scores: [{ typeId: type.id, confidence: 0.95 }], proposal: null, deadline: "2026-02-01" }),
+    "Customer is chasing a delivery",
+  ]);
+
+  const result = await onTaskIngested(app, task);
+
+  expect(result.deadline).toBe("2026-02-01");
+});
+
 test("an ambiguous task waits for the user and records candidates", async () => {
   const db = freshDb();
   const a = insertTaskType(db, { name: "Customer email", description: "d" });

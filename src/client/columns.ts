@@ -48,6 +48,22 @@ export function filterByDateRange(tasks: Task[], from: string, to: string): Task
   });
 }
 
+/** Whole days from today to a yyyy-mm-dd deadline; negative when overdue. */
+export function daysUntil(deadline: string): number {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const due = new Date(`${deadline}T00:00:00`);
+  return Math.round((due.getTime() - today.getTime()) / (24 * 60 * 60 * 1000));
+}
+
+/** Label + CSS tone for how urgent a deadline is, from days remaining (negative = overdue). */
+export function deadlineUrgency(daysLeft: number): { label: string; cls: string } {
+  if (daysLeft < 0) return { label: `${Math.abs(daysLeft)}d overdue`, cls: "deadline-overdue" };
+  if (daysLeft === 0) return { label: "due today", cls: "deadline-today" };
+  if (daysLeft <= 2) return { label: `${daysLeft}d left`, cls: "deadline-soon" };
+  return { label: `${daysLeft}d left`, cls: "deadline-later" };
+}
+
 export function taskAge(createdAt: string): string {
   const ms = Date.now() - new Date(createdAt).getTime();
   const mins = Math.floor(ms / 60000);

@@ -69,4 +69,5 @@ export const MIGRATIONS: string[] = [
      id TEXT PRIMARY KEY,
      data TEXT NOT NULL
    )`,
+  `ALTER TABLE tasks ADD COLUMN deadline TEXT`,
 ];

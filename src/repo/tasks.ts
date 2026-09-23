@@ -13,6 +13,7 @@ interface Row {
   type_candidates: string | null;
   state: string;
   assignee: string | null;
+  deadline: string | null;
   context: string;
   created_at: string;
   updated_at: string;
@@ -33,6 +34,7 @@ function toTask(row: Row): Task {
       : null,
     state: row.state as Task["state"],
     assignee: row.assignee as Task["assignee"],
+    deadline: row.deadline,
     context: JSON.parse(row.context) as Record<string, unknown>,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -91,12 +93,13 @@ export function updateTask(db: Database, id: string, patch: TaskPatch): Task {
   const next = { ...current, ...patch, updatedAt: new Date().toISOString() };
   db.query(
     `UPDATE tasks SET state = ?, type_id = ?, type_candidates = ?, assignee = ?,
-                      context = ?, updated_at = ? WHERE id = ?`,
+                      deadline = ?, context = ?, updated_at = ? WHERE id = ?`,
   ).run(
     next.state,
     next.typeId,
     next.typeCandidates ? JSON.stringify(next.typeCandidates) : null,
     next.assignee,
+    next.deadline,
     JSON.stringify(next.context),
     next.updatedAt,
     id,

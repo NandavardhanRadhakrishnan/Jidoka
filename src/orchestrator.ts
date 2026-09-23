@@ -34,12 +34,13 @@ export interface AppDeps {
 }
 
 export async function onTaskIngested(deps: AppDeps, task: Task): Promise<Task> {
-  const outcome = await triageTask(deps.provider, task, listTaskTypes(deps.db));
+  const { outcome, deadline } = await triageTask(deps.provider, task, listTaskTypes(deps.db));
 
   if (outcome.kind === "ambiguous") {
     return updateTask(deps.db, task.id, {
       state: "needs_type_confirmation",
       typeCandidates: outcome.candidateTypeIds,
+      deadline,
     });
   }
 
@@ -52,12 +53,14 @@ export async function onTaskIngested(deps: AppDeps, task: Task): Promise<Task> {
       typeId: type.id,
       typeCandidates: null,
       state: "needs_onboarding",
+      deadline,
     });
   }
 
   const matched = updateTask(deps.db, task.id, {
     typeId: outcome.typeId,
     typeCandidates: null,
+    deadline,
   });
   return processTask(deps, matched);
 }

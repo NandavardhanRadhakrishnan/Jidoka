@@ -24,13 +24,20 @@ const responseSchema = z.object({
     .object({ name: z.string(), description: z.string(), rationale: z.string() })
     .nullable()
     .optional(),
+  deadline: z.string().nullable().optional(),
 });
+
+export interface TriageResult {
+  outcome: TriageOutcome;
+  /** yyyy-mm-dd if the task text states or clearly implies one, else null. */
+  deadline: string | null;
+}
 
 export async function triageTask(
   provider: AiProvider,
   task: Task,
   types: TaskType[],
-): Promise<TriageOutcome> {
+): Promise<TriageResult> {
   const response = await completeJson(
     provider,
     {
@@ -41,6 +48,7 @@ export async function triageTask(
     responseSchema,
   );
 
+  const deadline = response.deadline ?? null;
   const known = new Set(types.map((t) => t.id));
   const scores = response.scores
     .filter((s) => known.has(s.typeId))
@@ -51,20 +59,20 @@ export async function triageTask(
   const runnerUp = scores[1];
 
   if (!top) {
-    if (proposal) return { kind: "new_type", proposal };
+    if (proposal) return { outcome: { kind: "new_type", proposal }, deadline };
     throw new Error("triage returned no usable type scores and no proposal");
   }
 
   if (top.confidence >= MIN_CONFIDENCE) {
     if (runnerUp && top.confidence - runnerUp.confidence <= AMBIGUITY_MARGIN) {
-      return { kind: "ambiguous", candidateTypeIds: [top.typeId, runnerUp.typeId] };
+      return { outcome: { kind: "ambiguous", candidateTypeIds: [top.typeId, runnerUp.typeId] }, deadline };
     }
-    return { kind: "matched", typeId: top.typeId };
+    return { outcome: { kind: "matched", typeId: top.typeId }, deadline };
   }
 
-  if (proposal) return { kind: "new_type", proposal };
+  if (proposal) return { outcome: { kind: "new_type", proposal }, deadline };
   return {
-    kind: "ambiguous",
-    candidateTypeIds: runnerUp ? [top.typeId, runnerUp.typeId] : [top.typeId],
+    outcome: { kind: "ambiguous", candidateTypeIds: runnerUp ? [top.typeId, runnerUp.typeId] : [top.typeId] },
+    deadline,
   };
 }

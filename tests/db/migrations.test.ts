@@ -14,3 +14,10 @@ test("migrate creates the rules table and drops the old pipelines table", () => 
   expect(names).toContain("rules");
   expect(names).not.toContain("pipelines");
 });
+
+test("migrate can run twice against the same database without erroring", () => {
+  const db = openDb(":memory:");
+  migrate(db);
+
+  expect(() => migrate(db)).not.toThrow();
+});

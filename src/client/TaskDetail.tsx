@@ -2,6 +2,8 @@ import { useState } from "react";
 import type { Task } from "../domain/task";
 import { api, type HandoffTarget } from "./api";
 import { Handoff, openUrlTargets } from "./Handoff";
+import { daysUntil, deadlineUrgency } from "./columns";
+import { Icon } from "./icons";
 
 interface StepLogEntry {
   stepId: string;
@@ -107,6 +109,15 @@ export function TaskDetail({
             <span className="mono">{task.sourceId}</span>
             <span>·</span>
             <span>{task.assignee ? `assigned to ${task.assignee}` : "unassigned"}</span>
+            {task.deadline && (
+              <>
+                <span>·</span>
+                <span className={`deadline-badge ${deadlineUrgency(daysUntil(task.deadline)).cls}`}>
+                  <Icon name="calendar" size={10} />
+                  {deadlineUrgency(daysUntil(task.deadline)).label}
+                </span>
+              </>
+            )}
             {task.url && (
               <>
                 <span>·</span>

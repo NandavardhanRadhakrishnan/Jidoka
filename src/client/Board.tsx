@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { Task } from "../domain/task";
 import type { TypeWithRules } from "./api";
-import { LANES, filterByDateRange, groupByLane, STATE_LABEL, taskAge } from "./columns";
+import { LANES, filterByDateRange, groupByLane, STATE_LABEL, taskAge, daysUntil, deadlineUrgency } from "./columns";
 import { Icon, sourceIcon } from "./icons";
 
 function laneTone(lane: "needs" | "running" | "settled", failed: boolean): string {
@@ -64,6 +64,12 @@ function TaskCard({
             {task.sourceId}
           </span>
           <span>{typeName}</span>
+          {task.deadline && (
+            <span className={`deadline-badge ${deadlineUrgency(daysUntil(task.deadline)).cls}`} style={{ marginLeft: "auto" }}>
+              <Icon name="calendar" size={10} />
+              {deadlineUrgency(daysUntil(task.deadline)).label}
+            </span>
+          )}
         </div>
 
         {task.state === "needs_type_confirmation" && !triaging && (

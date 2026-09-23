@@ -22,6 +22,8 @@ export interface Task {
   typeCandidates: string[] | null;
   state: TaskState;
   assignee: Assignee | null;
+  /** yyyy-mm-dd, extracted from the source content by triage; null when none was mentioned. */
+  deadline: string | null;
   context: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
@@ -41,5 +43,6 @@ export interface TaskPatch {
   typeId?: string | null;
   typeCandidates?: string[] | null;
   assignee?: Assignee | null;
+  deadline?: string | null;
   context?: Record<string, unknown>;
 }

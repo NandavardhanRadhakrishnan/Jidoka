@@ -33,6 +33,17 @@ test("insertTask stores a task in the ingested state", () => {
   expect(task.assignee).toBeNull();
   expect(task.metadata).toEqual({ from: "a@example.com" });
   expect(getTask(db, task.id)).toEqual(task);
+  expect(task.deadline).toBeNull();
+});
+
+test("updateTask patches a deadline", () => {
+  const db = freshDb();
+  const task = insertTask(db, sample);
+
+  const updated = updateTask(db, task.id, { deadline: "2026-02-01" });
+
+  expect(updated.deadline).toBe("2026-02-01");
+  expect(getTask(db, task.id)?.deadline).toBe("2026-02-01");
 });
 
 test("findTaskBySource finds by source and external id", () => {
