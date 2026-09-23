@@ -1,25 +1,59 @@
 import type { Task, TaskState } from "../domain/task";
 
-/** Which signal color a column reads as — mirrors an andon board: amber means a
- * person needs to decide something, blue means work is moving, green/red are terminal. */
-export type ColumnTone = "attention" | "active" | "done" | "failed";
+export type LaneKey = "needs" | "running" | "settled";
 
-export const COLUMNS: { state: TaskState; label: string; tone: ColumnTone }[] = [
-  { state: "ingested", label: "Ingested", tone: "active" },
-  { state: "needs_type_confirmation", label: "Needs type confirmation", tone: "attention" },
-  { state: "needs_onboarding", label: "Needs onboarding", tone: "attention" },
-  { state: "processing", label: "Processing", tone: "active" },
-  { state: "assigned_ai", label: "Assigned to AI", tone: "active" },
-  { state: "assigned_human", label: "Assigned to human", tone: "active" },
-  { state: "done", label: "Done", tone: "done" },
-  { state: "failed", label: "Failed", tone: "failed" },
+export const LANE_OF: Record<TaskState, LaneKey> = {
+  needs_type_confirmation: "needs",
+  needs_onboarding: "needs",
+  assigned_human: "needs",
+  ingested: "running",
+  processing: "running",
+  assigned_ai: "running",
+  done: "settled",
+  failed: "settled",
+};
+
+export const LANES: { key: LaneKey; label: string; sub: string }[] = [
+  { key: "needs", label: "Needs you", sub: "blocked on a person" },
+  { key: "running", label: "Running itself", sub: "rules at work" },
+  { key: "settled", label: "Settled", sub: "closed or failed" },
 ];
 
-export function groupByColumn(tasks: Task[]): Record<TaskState, Task[]> {
-  const grouped = Object.fromEntries(COLUMNS.map((c) => [c.state, [] as Task[]])) as Record<
-    TaskState,
-    Task[]
-  >;
-  for (const task of tasks) grouped[task.state]?.push(task);
+export function groupByLane(tasks: Task[]): Record<LaneKey, Task[]> {
+  const grouped: Record<LaneKey, Task[]> = { needs: [], running: [], settled: [] };
+  for (const task of tasks) grouped[LANE_OF[task.state]].push(task);
   return grouped;
+}
+
+export const STATE_LABEL: Record<TaskState, string> = {
+  ingested: "ingested",
+  needs_type_confirmation: "needs type confirmation",
+  needs_onboarding: "needs onboarding",
+  processing: "processing",
+  assigned_ai: "assigned to AI",
+  assigned_human: "assigned to human",
+  done: "done",
+  failed: "failed",
+};
+
+/** Keeps only tasks created on or after `from` and on or before `to` (both yyyy-mm-dd, either end optional). */
+export function filterByDateRange(tasks: Task[], from: string, to: string): Task[] {
+  if (!from && !to) return tasks;
+  const fromMs = from ? new Date(from).getTime() : -Infinity;
+  // `to` is a date with no time component; treat it as through the end of that day.
+  const toMs = to ? new Date(to).getTime() + 24 * 60 * 60 * 1000 : Infinity;
+  return tasks.filter((task) => {
+    const createdMs = new Date(task.createdAt).getTime();
+    return createdMs >= fromMs && createdMs < toMs;
+  });
+}
+
+export function taskAge(createdAt: string): string {
+  const ms = Date.now() - new Date(createdAt).getTime();
+  const mins = Math.floor(ms / 60000);
+  if (mins < 1) return `${Math.max(1, Math.floor(ms / 1000))}s`;
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h`;
+  return `${Math.floor(hours / 24)}d`;
 }

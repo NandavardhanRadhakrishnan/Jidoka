@@ -12,6 +12,12 @@ function fakeClient(): McpLike & { calls: unknown[] } {
             name: "get_thread",
             description: "Fetch a mail thread",
             inputSchema: { type: "object", properties: { id: { type: "string" } } },
+            annotations: { readOnlyHint: true },
+          },
+          {
+            name: "send_reply",
+            description: "Reply to a mail thread",
+            inputSchema: { type: "object", properties: { id: { type: "string" } } },
           },
         ],
       };
@@ -37,6 +43,12 @@ test("listTools prefixes tool names with the server name", async () => {
     {
       name: "outlook__get_thread",
       description: "Fetch a mail thread",
+      inputSchema: { type: "object", properties: { id: { type: "string" } } },
+      annotations: { readOnlyHint: true },
+    },
+    {
+      name: "outlook__send_reply",
+      description: "Reply to a mail thread",
       inputSchema: { type: "object", properties: { id: { type: "string" } } },
     },
   ]);

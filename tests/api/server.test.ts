@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
 import { openDb, migrate } from "../../src/db";
-import { insertTask } from "../../src/repo/tasks";
+import { getTask, insertTask } from "../../src/repo/tasks";
 import { insertTaskType } from "../../src/repo/taskTypes";
 import { createServer } from "../../src/api/server";
 import type { AppDeps } from "../../src/orchestrator";
@@ -26,7 +26,7 @@ function app(replies: string[] = []): { deps: AppDeps; fetch: (req: Request) => 
   return { deps, fetch: async (req) => server.fetch(req) };
 }
 
-test("POST /api/tasks injects a task and runs triage on it", async () => {
+test("POST /api/tasks responds immediately, then triages in the background", async () => {
   const { deps, fetch } = app([
     JSON.stringify({
       scores: [],
@@ -42,11 +42,18 @@ test("POST /api/tasks injects a task and runs triage on it", async () => {
     }),
   );
 
+  // The response must not wait on triage — it reports the freshly ingested
+  // task so the request (and any UI holding it open) never blocks on an AI call.
   expect(response.status).toBe(201);
-  const body = (await response.json()) as { task: { sourceId: string; state: string; typeId: string } };
+  const body = (await response.json()) as { task: { id: string; sourceId: string; state: string; typeId: string | null } };
   expect(body.task.sourceId).toBe("manual");
-  expect(body.task.state).toBe("needs_onboarding");
-  expect(body.task.typeId).not.toBeNull();
+  expect(body.task.state).toBe("ingested");
+  expect(body.task.typeId).toBeNull();
+
+  await Bun.sleep(10);
+  const settled = getTask(deps.db, body.task.id);
+  expect(settled?.state).toBe("needs_onboarding");
+  expect(settled?.typeId).not.toBeNull();
 });
 
 test("POST /api/tasks rejects a missing title and a duplicate external id", async () => {

@@ -9,6 +9,8 @@ export interface ToolSpec {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  /** Passed through from the MCP server when it supplies tool annotations; absent when unknown. */
+  annotations?: { readOnlyHint?: boolean };
 }
 
 export interface AiToolCall {

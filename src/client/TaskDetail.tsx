@@ -11,14 +11,7 @@ interface StepLogEntry {
 }
 
 /** Context keys the rule writes for its own bookkeeping, not for reading. */
-const INTERNAL_KEYS = new Set([
-  "ruleLog",
-  "completedAt",
-  "completionNote",
-  "error",
-  "handoff",
-  "pickedUpAt",
-]);
+const INTERNAL_KEYS = new Set(["ruleLog", "completedAt", "completionNote", "error", "handoff", "pickedUpAt"]);
 
 export function TaskDetail({
   task,
@@ -36,6 +29,7 @@ export function TaskDetail({
     (task.context.handoff as HandoffTarget[] | undefined) ?? null,
   );
   const [canLaunchTerminal, setCanLaunchTerminal] = useState(false);
+  const [traceOpen, setTraceOpen] = useState(false);
 
   async function pickUp() {
     setBusy(true);
@@ -56,6 +50,21 @@ export function TaskDetail({
   const log = (task.context.ruleLog as StepLogEntry[] | undefined) ?? [];
   const outputs = Object.entries(task.context).filter(([key]) => !INTERNAL_KEYS.has(key));
 
+  // A key only carries real model/tool output when an ai, agent, or mcp_tool
+  // step's log entry named it — an assign step's `note:<id>` is pure
+  // renderTemplate() substitution, never a model call, so it gets its own label.
+  const producedBy = new Map(
+    log.filter((entry) => entry.output && entry.type !== "assign").map((entry) => [entry.output as string, entry.type]),
+  );
+  function provenanceLabel(key: string): { text: string; kind: "note" | "produced" | "unknown" } {
+    if (key.startsWith("note:")) return { text: "note", kind: "note" };
+    const producer = producedBy.get(key);
+    if (producer === "ai") return { text: "AI output", kind: "produced" };
+    if (producer === "agent") return { text: "agent output", kind: "produced" };
+    if (producer === "mcp_tool") return { text: "tool output", kind: "produced" };
+    return { text: "context", kind: "unknown" };
+  }
+
   async function act(run: () => Promise<unknown>) {
     setBusy(true);
     setError(null);
@@ -70,95 +79,147 @@ export function TaskDetail({
     }
   }
 
+  const tone =
+    task.state === "done"
+      ? "var(--color-neutral-500)"
+      : task.state === "failed"
+        ? "var(--color-accent-800)"
+        : task.state === "assigned_human" || task.state === "needs_type_confirmation" || task.state === "needs_onboarding"
+          ? "var(--color-accent)"
+          : "var(--color-neutral-800)";
+
   return (
-    <div className="dialog">
-      <h2>{task.title}</h2>
-      <p className="meta">
-        {task.state.replace(/_/g, " ")}
-        {task.assignee ? ` · ${task.assignee}` : ""} · {task.sourceId}
-        {task.url ? (
-          <>
-            {" · "}
-            <a href={task.url} target="_blank" rel="noreferrer">
-              open source item
-            </a>
-          </>
-        ) : null}
-      </p>
+    <div className="drawer-backdrop">
+      <div className="drawer-scrim" onClick={onClose} />
+      <div className="drawer">
+        <div className="drawer-head">
+          <div className="top">
+            <span className="mono state" style={{ color: tone }}>
+              {task.state.replace(/_/g, " ")}
+            </span>
+            <span className="mono id">{task.id}</span>
+            <button className="btn btn-ghost" style={{ marginLeft: "auto", fontSize: 12, padding: 0, color: "var(--color-neutral-700)" }} onClick={onClose}>
+              Close
+            </button>
+          </div>
+          <h4 style={{ margin: 0, fontSize: 21, lineHeight: 1.2 }}>{task.title}</h4>
+          <div className="meta">
+            <span className="mono">{task.sourceId}</span>
+            <span>·</span>
+            <span>{task.assignee ? `assigned to ${task.assignee}` : "unassigned"}</span>
+            {task.url && (
+              <>
+                <span>·</span>
+                <a href={task.url} target="_blank" rel="noreferrer">
+                  open source item
+                </a>
+              </>
+            )}
+          </div>
+        </div>
 
-      {task.body && <pre className="body">{task.body}</pre>}
-
-      {task.state !== "done" && (handoff?.length ?? 0) >= 0 && (
-        <button disabled={busy} onClick={() => void pickUp()}>
-          {task.context.pickedUpAt ? "Open everything again" : "Pick up"}
-        </button>
-      )}
-
-      {handoff && (
-        <Handoff taskId={task.id} targets={handoff} canLaunchTerminal={canLaunchTerminal} />
-      )}
-
-      {typeof task.context.error === "string" && (
-        <p className="error">Rule failed: {task.context.error}</p>
-      )}
-
-      {outputs.length > 0 && (
-        <>
-          <h3>What the rule produced</h3>
-          {outputs.map(([key, value]) => (
-            <div key={key} className="output">
-              <strong>{key}</strong>
-              <pre>{typeof value === "string" ? value : JSON.stringify(value, null, 2)}</pre>
-            </div>
-          ))}
-        </>
-      )}
-
-      {log.length > 0 && (
-        <>
-          <h3>Steps</h3>
-          <ol className="steps">
-            {log.map((entry, index) => (
-              <li key={`${entry.stepId}-${index}`}>
-                {entry.stepId} ({entry.type})
-                {entry.output ? ` → ${entry.output}` : ""}
-                {entry.error ? ` — ${entry.error}` : ""}
-              </li>
-            ))}
-          </ol>
-        </>
-      )}
-
-      {task.state === "done" ? (
-        <>
-          {typeof task.context.completionNote === "string" && (
-            <p className="meta">Note: {task.context.completionNote}</p>
+        <div className="drawer-body">
+          {outputs.length > 0 && (
+            <section className="drawer-section">
+              <h6 style={{ margin: 0 }}>What the rule produced</h6>
+              {outputs.map(([key, value]) => {
+                const provenance = provenanceLabel(key);
+                return (
+                  <div key={key} className="artifact">
+                    <div className="head">
+                      <span className="mono key">{key}</span>
+                      <span className={`provenance-badge provenance-${provenance.kind}`}>{provenance.text}</span>
+                    </div>
+                    <div className="content">{typeof value === "string" ? value : JSON.stringify(value, null, 2)}</div>
+                  </div>
+                );
+              })}
+            </section>
           )}
-          <button disabled={busy} onClick={() => void act(() => api.reopenTask(task.id))}>
-            Reopen
-          </button>
-        </>
-      ) : (
-        <>
-          <label>
-            Closing note (optional)
-            <input
-              value={note}
-              placeholder="What you did, or why this is finished"
-              onChange={(e) => setNote(e.target.value)}
-            />
-          </label>
-          <button disabled={busy} onClick={() => void act(() => api.completeTask(task.id, note))}>
-            {busy ? "Saving…" : "Mark done"}
-          </button>
-        </>
-      )}
 
-      {error && <p className="error">{error}</p>}
+          {typeof task.context.error === "string" && <p className="error-text">Rule failed: {task.context.error}</p>}
 
-      <button className="secondary" disabled={busy} onClick={onClose}>
-        Close
-      </button>
+          {task.state === "assigned_human" && (
+            <section className="human-panel">
+              <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                <span className="label">Yours to do</span>
+                <span style={{ fontSize: 12, color: "var(--color-neutral-800)" }}>prepared and waiting on you</span>
+              </div>
+              {handoff && <Handoff taskId={task.id} targets={handoff} canLaunchTerminal={canLaunchTerminal} />}
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <button className="btn btn-primary" disabled={busy} onClick={() => void pickUp()}>
+                  {task.context.pickedUpAt ? "Open everything again" : "Pick up"}
+                </button>
+                <button className="btn btn-secondary" disabled={busy} onClick={() => void act(() => api.completeTask(task.id, note))}>
+                  Mark done
+                </button>
+              </div>
+            </section>
+          )}
+
+          {task.body && (
+            <section className="drawer-section">
+              <h6 style={{ margin: 0 }}>Task content</h6>
+              <div className="task-body">{task.body}</div>
+            </section>
+          )}
+
+          {log.length > 0 && (
+            <section className="drawer-section">
+              <button className="trace-toggle" onClick={() => setTraceOpen((v) => !v)}>
+                <span>Run trace</span>
+                <span className="mono" style={{ fontSize: 11, color: "var(--color-neutral-700)" }}>
+                  {log.length} step(s)
+                </span>
+                <span className="mono" style={{ marginLeft: "auto", fontSize: 11, color: "var(--color-accent)" }}>
+                  {traceOpen ? "hide" : "show"}
+                </span>
+              </button>
+              {traceOpen && (
+                <div style={{ display: "flex", flexDirection: "column" }}>
+                  {log.map((entry, index) => (
+                    <div key={`${entry.stepId}-${index}`} className="trace-entry">
+                      <span className="tone" style={{ background: entry.error ? "var(--color-accent)" : "var(--color-neutral-400)" }} />
+                      <span className="mono id">{entry.stepId} · {entry.type}</span>
+                      <span style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
+                        {entry.output && (
+                          <span className="mono" style={{ fontSize: 11, color: "var(--color-neutral-700)", lineHeight: 1.5 }}>
+                            {entry.output}
+                          </span>
+                        )}
+                        {entry.error && <span className="error-text">{entry.error}</span>}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+          )}
+
+          {task.state === "done" ? (
+            <section className="drawer-section">
+              {typeof task.context.completionNote === "string" && (
+                <p className="text-muted">Note: {task.context.completionNote}</p>
+              )}
+              <button className="btn btn-secondary" style={{ alignSelf: "flex-start" }} disabled={busy} onClick={() => void act(() => api.reopenTask(task.id))}>
+                Reopen
+              </button>
+            </section>
+          ) : task.state !== "assigned_human" ? (
+            <section className="drawer-section">
+              <div className="field">
+                <label>Closing note (optional)</label>
+                <input className="input" value={note} placeholder="What you did, or why this is finished" onChange={(e) => setNote(e.target.value)} />
+              </div>
+              <button className="btn btn-primary" style={{ alignSelf: "flex-start" }} disabled={busy} onClick={() => void act(() => api.completeTask(task.id, note))}>
+                {busy ? "Saving…" : "Mark done"}
+              </button>
+            </section>
+          ) : null}
+
+          {error && <p className="error-text">{error}</p>}
+        </div>
+      </div>
     </div>
   );
 }

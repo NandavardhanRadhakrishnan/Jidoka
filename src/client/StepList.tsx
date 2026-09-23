@@ -1,8 +1,9 @@
 import { useState } from "react";
-import type { RuleStep } from "../domain/rule";
+import type { RuleStep, HandoffTarget } from "../domain/rule";
 import type { ModelOption, TypeWithRules } from "./api";
 import type { ToolSpec } from "../ai/provider";
-import { TOOL_SEPARATOR } from "../mcp/names";
+import { TOOL_SEPARATOR, splitToolName } from "../mcp/names";
+import { Icon, stepKindIcon, stepKindColors, toolPerm } from "./icons";
 
 let nextId = 1;
 function freshStepId(): string {
@@ -45,9 +46,9 @@ function ModelPicker({
   ctx: Ctx;
 }) {
   return (
-    <label>
-      Model {value === undefined ? "(auto — none set)" : ""}
-      <select value={value ?? ""} onChange={(e) => onChange(e.target.value || undefined)}>
+    <div className="field">
+      <label>Model {value === undefined ? "(auto — none set)" : ""}</label>
+      <select className="input" value={value ?? ""} onChange={(e) => onChange(e.target.value || undefined)}>
         <option value="">(unset — falls back to the default)</option>
         {ctx.models.map((m) => (
           <option key={m.id} value={m.id}>
@@ -55,7 +56,55 @@ function ModelPicker({
           </option>
         ))}
       </select>
-    </label>
+    </div>
+  );
+}
+
+function groupToolsByServer(tools: ToolSpec[]): Map<string, ToolSpec[]> {
+  const groups = new Map<string, ToolSpec[]>();
+  for (const t of tools) {
+    const { server } = splitToolName(t.name);
+    const group = groups.get(server) ?? [];
+    group.push(t);
+    groups.set(server, group);
+  }
+  return groups;
+}
+
+function ToolPicker({
+  tools,
+  selected,
+  onChange,
+}: {
+  tools: ToolSpec[];
+  selected: string[];
+  onChange: (names: string[]) => void;
+}) {
+  const groups = groupToolsByServer(tools);
+  function toggle(name: string, checked: boolean) {
+    onChange(checked ? [...selected, name] : selected.filter((n) => n !== name));
+  }
+  return (
+    <div className="tool-picker">
+      {[...groups.entries()].map(([server, serverTools]) => (
+        <details key={server} className="tool-picker-group">
+          <summary>
+            {server} ({serverTools.filter((t) => selected.includes(t.name)).length}/{serverTools.length})
+          </summary>
+          {serverTools.map((t) => {
+            const perm = toolPerm(t.annotations);
+            return (
+              <label key={t.name} className="tool-picker-row">
+                <input type="checkbox" checked={selected.includes(t.name)} onChange={(e) => toggle(t.name, e.target.checked)} />
+                <span className="tool-name mono">{splitToolName(t.name).tool}</span>
+                <span className={`perm-badge ${perm.cls}`}>{perm.label}</span>
+              </label>
+            );
+          })}
+        </details>
+      ))}
+      {groups.size === 0 && <p className="text-muted" style={{ fontSize: 12 }}>no MCP tools available</p>}
+    </div>
   );
 }
 
@@ -72,9 +121,10 @@ function McpToolFields({
 
   return (
     <>
-      <label>
-        Tool
+      <div className="field">
+        <label>Tool</label>
         <select
+          className="input"
           value={step.server && step.tool ? `${step.server}${TOOL_SEPARATOR}${step.tool}` : ""}
           onChange={(e) => {
             const value = e.target.value;
@@ -85,16 +135,21 @@ function McpToolFields({
           }}
         >
           <option value="">(choose a tool)</option>
-          {ctx.tools.map((t) => (
-            <option key={t.name} value={t.name}>
-              {t.name}
-            </option>
+          {[...groupToolsByServer(ctx.tools).entries()].map(([server, serverTools]) => (
+            <optgroup key={server} label={server}>
+              {serverTools.map((t) => (
+                <option key={t.name} value={t.name}>
+                  {splitToolName(t.name).tool}
+                </option>
+              ))}
+            </optgroup>
           ))}
         </select>
-      </label>
-      <label>
-        Input (JSON)
+      </div>
+      <div className="field">
+        <label>Input (JSON)</label>
         <textarea
+          className="input"
           rows={2}
           value={rawInput}
           onChange={(e) => {
@@ -107,21 +162,132 @@ function McpToolFields({
             }
           }}
         />
-      </label>
+      </div>
       {(() => {
         try {
           JSON.parse(rawInput);
           return null;
         } catch {
-          return <p className="error">Invalid JSON — not saved</p>;
+          return <p className="error-text">Invalid JSON — not saved</p>;
         }
       })()}
-      <label>
-        Output key
-        <input value={step.output} onChange={(e) => onChange({ ...step, output: e.target.value })} />
-      </label>
-      <p className="meta">no model — logic</p>
+      <div className="field">
+        <label>Output key</label>
+        <input className="input" value={step.output} onChange={(e) => onChange({ ...step, output: e.target.value })} />
+      </div>
+      <p className="text-muted" style={{ fontSize: 12 }}>
+        no model — logic
+      </p>
     </>
+  );
+}
+
+function defaultHandoffTarget(kind: HandoffTarget["kind"]): HandoffTarget {
+  switch (kind) {
+    case "url":
+      return { kind: "url", label: "", url: "" };
+    case "draft":
+      return { kind: "draft", label: "", content: "" };
+    case "command":
+      return { kind: "command", label: "", command: "" };
+    case "session":
+      return { kind: "session", label: "", sessionId: "" };
+  }
+}
+
+function HandoffTargetRow({
+  target,
+  onChange,
+  onRemove,
+}: {
+  target: HandoffTarget;
+  onChange: (target: HandoffTarget) => void;
+  onRemove: () => void;
+}) {
+  return (
+    <div className="card" style={{ gap: 8 }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <select
+          className="input"
+          style={{ maxWidth: 130 }}
+          value={target.kind}
+          onChange={(e) => onChange(defaultHandoffTarget(e.target.value as HandoffTarget["kind"]))}
+        >
+          <option value="url">url</option>
+          <option value="draft">draft</option>
+          <option value="command">command</option>
+          <option value="session">session</option>
+        </select>
+        <input
+          className="input"
+          placeholder="label"
+          style={{ flex: 1 }}
+          value={target.label}
+          onChange={(e) => onChange({ ...target, label: e.target.value })}
+        />
+        <button className="btn btn-ghost" style={{ fontSize: 12, padding: 0 }} onClick={onRemove}>
+          Remove
+        </button>
+      </div>
+      {target.kind === "url" && (
+        <input
+          className="input mono"
+          placeholder="{{task.url}}"
+          value={target.url}
+          onChange={(e) => onChange({ ...target, url: e.target.value })}
+        />
+      )}
+      {target.kind === "draft" && (
+        <textarea
+          className="input"
+          rows={2}
+          placeholder="draft content"
+          value={target.content}
+          onChange={(e) => onChange({ ...target, content: e.target.value })}
+        />
+      )}
+      {target.kind === "command" && (
+        <input
+          className="input mono"
+          placeholder="command"
+          value={target.command}
+          onChange={(e) => onChange({ ...target, command: e.target.value })}
+        />
+      )}
+      {target.kind === "session" && (
+        <input
+          className="input mono"
+          placeholder="context key holding the session id"
+          value={target.sessionId}
+          onChange={(e) => onChange({ ...target, sessionId: e.target.value })}
+        />
+      )}
+    </div>
+  );
+}
+
+function HandoffTargetsEditor({ targets, onChange }: { targets: HandoffTarget[]; onChange: (targets: HandoffTarget[]) => void }) {
+  return (
+    <div className="field">
+      <label>Open (what a human sees when they pick this up)</label>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {targets.map((target, index) => (
+          <HandoffTargetRow
+            key={index}
+            target={target}
+            onChange={(next) => onChange(targets.map((t, i) => (i === index ? next : t)))}
+            onRemove={() => onChange(targets.filter((_, i) => i !== index))}
+          />
+        ))}
+        <button
+          className="btn btn-ghost"
+          style={{ alignSelf: "flex-start", fontSize: 12, padding: 0 }}
+          onClick={() => onChange([...targets, defaultHandoffTarget("url")])}
+        >
+          + Add target
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -136,103 +302,103 @@ function StepBox({
   onRemove: () => void;
   ctx: Ctx;
 }) {
+  const kc = stepKindColors(step.type);
   return (
-    <div className="rule-step">
-      <div className="rule-step-header">
-        <strong>{step.type}</strong>
-        <button className="link" onClick={onRemove}>
+    <div className="card" style={{ gap: "var(--space-3)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span
+          className="mono"
+          style={{ fontSize: 10.5, padding: "3px 8px", background: kc.bg, color: kc.fg, display: "inline-flex", alignItems: "center", gap: 6 }}
+        >
+          <Icon name={stepKindIcon(step.type)} size={13} />
+          {step.type}
+        </span>
+        <button className="btn btn-ghost" style={{ marginLeft: "auto", fontSize: 12, padding: 0 }} onClick={onRemove}>
           Remove
         </button>
       </div>
 
       {step.type === "ai" && (
         <>
-          <label>
-            Prompt
-            <textarea rows={2} value={step.prompt} onChange={(e) => onChange({ ...step, prompt: e.target.value })} />
-          </label>
-          <label>
-            Output key
-            <input value={step.output} onChange={(e) => onChange({ ...step, output: e.target.value })} />
-          </label>
+          <div className="field">
+            <label>Prompt</label>
+            <textarea className="input" rows={2} value={step.prompt} onChange={(e) => onChange({ ...step, prompt: e.target.value })} />
+          </div>
+          <div className="field">
+            <label>Output key</label>
+            <input className="input" value={step.output} onChange={(e) => onChange({ ...step, output: e.target.value })} />
+          </div>
           <ModelPicker value={step.model} onChange={(model) => onChange({ ...step, model })} ctx={ctx} />
         </>
       )}
 
       {step.type === "agent" && (
         <>
-          <label>
-            Prompt
-            <textarea rows={2} value={step.prompt} onChange={(e) => onChange({ ...step, prompt: e.target.value })} />
-          </label>
-          <label>
-            Tools
-            <select
-              multiple
-              value={step.tools}
-              onChange={(e) =>
-                onChange({ ...step, tools: Array.from(e.target.selectedOptions, (o) => o.value) })
-              }
-            >
-              {ctx.tools.map((t) => (
-                <option key={t.name} value={t.name}>
-                  {t.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Max iterations
+          <div className="field">
+            <label>Prompt</label>
+            <textarea className="input" rows={2} value={step.prompt} onChange={(e) => onChange({ ...step, prompt: e.target.value })} />
+          </div>
+          <div className="field">
+            <label>Tools</label>
+            <ToolPicker tools={ctx.tools} selected={step.tools} onChange={(tools) => onChange({ ...step, tools })} />
+          </div>
+          <div className="field">
+            <label>Max iterations</label>
             <input
+              className="input"
               type="number"
               min={1}
               max={20}
               value={step.maxIterations}
               onChange={(e) => onChange({ ...step, maxIterations: Number(e.target.value) })}
             />
-          </label>
-          <label>
-            Output key
-            <input value={step.output} onChange={(e) => onChange({ ...step, output: e.target.value })} />
-          </label>
+          </div>
+          <div className="field">
+            <label>Output key</label>
+            <input className="input" value={step.output} onChange={(e) => onChange({ ...step, output: e.target.value })} />
+          </div>
           <ModelPicker value={step.model} onChange={(model) => onChange({ ...step, model })} ctx={ctx} />
         </>
       )}
 
-      {step.type === "mcp_tool" && (
-        <McpToolFields step={step} onChange={onChange} ctx={ctx} />
-      )}
+      {step.type === "mcp_tool" && <McpToolFields step={step} onChange={onChange} ctx={ctx} />}
 
       {step.type === "assign" && (
         <>
-          <label>
-            Assign to
-            <select value={step.to} onChange={(e) => onChange({ ...step, to: e.target.value as "ai" | "human" })}>
+          <div className="field">
+            <label>Assign to</label>
+            <select className="input" value={step.to} onChange={(e) => onChange({ ...step, to: e.target.value as "ai" | "human" })}>
               <option value="ai">ai</option>
               <option value="human">human</option>
             </select>
-          </label>
-          <label>
-            Note
-            <input value={step.note ?? ""} onChange={(e) => onChange({ ...step, note: e.target.value })} />
-          </label>
-          <p className="meta">no model — logic</p>
+          </div>
+          <div className="field">
+            <label>Note</label>
+            <input className="input" value={step.note ?? ""} onChange={(e) => onChange({ ...step, note: e.target.value })} />
+          </div>
+          <HandoffTargetsEditor targets={step.open ?? []} onChange={(open) => onChange({ ...step, open })} />
+          <p className="text-muted" style={{ fontSize: 12 }}>
+            no model — logic
+          </p>
         </>
       )}
 
       {step.type === "branch" && (
         <>
-          <label>
-            Branch on context key
-            <input value={step.on} onChange={(e) => onChange({ ...step, on: e.target.value })} />
-          </label>
-          <p className="meta">no model — logic</p>
+          <div className="field">
+            <label>Branch on context key</label>
+            <input className="input" value={step.on} onChange={(e) => onChange({ ...step, on: e.target.value })} />
+          </div>
+          <p className="text-muted" style={{ fontSize: 12 }}>
+            no model — logic
+          </p>
           {Object.entries(step.cases).map(([value, caseSteps]) => (
-            <div key={value} className="rule-branch-case">
-              <div className="rule-step-header">
-                <span>case "{value}"</span>
+            <div key={value} style={{ borderLeft: "2px solid var(--color-divider)", paddingLeft: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span className="tag tag-accent">case "{value}"</span>
                 <button
-                  className="link"
+                  className="btn btn-ghost"
+                  style={{ marginLeft: "auto", fontSize: 12, padding: 0 }}
                   onClick={() => {
                     const { [value]: _removed, ...rest } = step.cases;
                     onChange({ ...step, cases: rest });
@@ -249,31 +415,30 @@ function StepBox({
             </div>
           ))}
           <button
-            className="link"
+            className="btn btn-ghost"
+            style={{ alignSelf: "flex-start", fontSize: 12, padding: 0 }}
             onClick={() => {
               const value = window.prompt("Case value?");
               if (!value) return;
               onChange({ ...step, cases: { ...step.cases, [value]: [] } });
             }}
           >
-            Add case
+            + Add case
           </button>
-          <div className="rule-branch-case">
-            <span className="meta">default</span>
-            <StepList
-              steps={step.default ?? []}
-              onChange={(next) => onChange({ ...step, default: next })}
-              ctx={ctx}
-            />
+          <div style={{ borderLeft: "2px solid var(--color-divider)", paddingLeft: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+            <span className="tag tag-neutral" style={{ alignSelf: "flex-start" }}>
+              default
+            </span>
+            <StepList steps={step.default ?? []} onChange={(next) => onChange({ ...step, default: next })} ctx={ctx} />
           </div>
         </>
       )}
 
       {step.type === "call_rule" && (
         <>
-          <label>
-            Type
-            <select value={step.typeId} onChange={(e) => onChange({ ...step, typeId: e.target.value })}>
+          <div className="field">
+            <label>Type</label>
+            <select className="input" value={step.typeId} onChange={(e) => onChange({ ...step, typeId: e.target.value })}>
               <option value="">(choose a type)</option>
               {ctx.types.map((t) => (
                 <option key={t.id} value={t.id}>
@@ -281,20 +446,43 @@ function StepBox({
                 </option>
               ))}
             </select>
-          </label>
-          <label>
-            Version
+          </div>
+          <div className="field">
+            <label>Version</label>
             <input
+              className="input"
               type="number"
               min={1}
               value={step.version}
               onChange={(e) => onChange({ ...step, version: Number(e.target.value) })}
             />
-          </label>
-          <p className="meta">no model — logic</p>
+          </div>
+          <p className="text-muted" style={{ fontSize: 12 }}>
+            no model — logic
+          </p>
         </>
       )}
     </div>
+  );
+}
+
+function InsertStepControl({ onInsert }: { onInsert: (type: RuleStep["type"]) => void }) {
+  return (
+    <select
+      className="step-insert-select"
+      value=""
+      onChange={(e) => {
+        const type = e.target.value as RuleStep["type"];
+        if (type) onInsert(type);
+      }}
+    >
+      <option value="">+ insert step</option>
+      {STEP_TYPES.map((t) => (
+        <option key={t} value={t}>
+          {t}
+        </option>
+      ))}
+    </select>
   );
 }
 
@@ -307,34 +495,26 @@ export function StepList({
   onChange: (steps: RuleStep[]) => void;
   ctx: Ctx;
 }) {
+  function insertAt(index: number, type: RuleStep["type"]) {
+    const next = [...steps];
+    next.splice(index, 0, defaultStep(type));
+    onChange(next);
+  }
+
   return (
-    <div className="rule-step-list">
+    <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
+      <InsertStepControl onInsert={(type) => insertAt(0, type)} />
       {steps.map((step, index) => (
-        <StepBox
-          key={step.id}
-          step={step}
-          ctx={ctx}
-          onChange={(next) => onChange(steps.map((s, i) => (i === index ? next : s)))}
-          onRemove={() => onChange(steps.filter((_, i) => i !== index))}
-        />
+        <div key={step.id} style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
+          <StepBox
+            step={step}
+            ctx={ctx}
+            onChange={(next) => onChange(steps.map((s, i) => (i === index ? next : s)))}
+            onRemove={() => onChange(steps.filter((_, i) => i !== index))}
+          />
+          <InsertStepControl onInsert={(type) => insertAt(index + 1, type)} />
+        </div>
       ))}
-      <label>
-        Add step
-        <select
-          value=""
-          onChange={(e) => {
-            const type = e.target.value as RuleStep["type"];
-            if (type) onChange([...steps, defaultStep(type)]);
-          }}
-        >
-          <option value="">(choose a step type)</option>
-          {STEP_TYPES.map((t) => (
-            <option key={t} value={t}>
-              {t}
-            </option>
-          ))}
-        </select>
-      </label>
     </div>
   );
 }

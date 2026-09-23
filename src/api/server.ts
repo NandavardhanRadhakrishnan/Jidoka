@@ -65,15 +65,15 @@ export function createServer(deps: AppDeps, extraRoutes?: Hono): Hono {
       metadata: input.metadata ?? {},
     });
 
-    try {
-      return c.json({ task: await onTaskIngested(deps, task) }, 201);
-    } catch (error) {
-      // The task is stored either way; report why triage could not run.
-      return c.json(
-        { task, error: error instanceof Error ? error.message : String(error) },
-        502,
-      );
-    }
+    // Triage can run for seconds (a real AI call), and an agent-step rule for
+    // minutes — far longer than this request should be held open. Respond as
+    // soon as the task is stored and let the board poll for "triage running…"
+    // to resolve, the same way a polled source's ingestion already works.
+    void onTaskIngested(deps, task).catch((error) => {
+      console.error(`[api] triage for task ${task.id} failed:`, error);
+    });
+
+    return c.json({ task }, 201);
   });
 
   app.get("/api/types", (c) =>

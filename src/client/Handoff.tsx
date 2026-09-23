@@ -39,48 +39,44 @@ export function Handoff({
   }
 
   return (
-    <>
-      <h3>Handoff</h3>
-      <div className="handoff">
-        {targets.map((target, index) => (
-          <div key={`${target.label}-${index}`} className="target">
-            <strong>{target.label}</strong>
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      {targets.map((target, index) => (
+        <div key={`${target.label}-${index}`} className="handoff-target">
+          <span className="kind">{target.kind}</span>
+          <span style={{ flex: 1, minWidth: 0 }}>{target.label}</span>
 
-            {target.kind === "url" && (
-              <a href={target.url} target="_blank" rel="noreferrer">
-                {target.url}
-              </a>
-            )}
+          {target.kind === "url" && (
+            <a href={target.url} target="_blank" rel="noreferrer">
+              open
+            </a>
+          )}
 
-            {target.kind === "draft" && (
-              <>
-                <pre>{target.content}</pre>
-                <button className="link" onClick={() => void copy(target.content, target.label)}>
-                  copy
+          {target.kind === "draft" && (
+            <button className="btn btn-ghost" style={{ padding: 0, fontSize: 11 }} onClick={() => void copy(target.content, target.label)}>
+              copy
+            </button>
+          )}
+
+          {target.kind === "command" && (
+            <span style={{ display: "flex", gap: 10 }}>
+              <button className="btn btn-ghost" style={{ padding: 0, fontSize: 11 }} onClick={() => void copy(target.command, "command")}>
+                copy
+              </button>
+              {canLaunchTerminal && (
+                <button className="btn btn-ghost" style={{ padding: 0, fontSize: 11 }} onClick={() => void launch(target.label)}>
+                  open in terminal
                 </button>
-              </>
-            )}
-
-            {target.kind === "command" && (
-              <>
-                <code>{target.command}</code>
-                <span className="row">
-                  <button className="link" onClick={() => void copy(target.command, "command")}>
-                    copy
-                  </button>
-                  {canLaunchTerminal && (
-                    <button className="link" onClick={() => void launch(target.label)}>
-                      open in terminal
-                    </button>
-                  )}
-                </span>
-              </>
-            )}
-          </div>
-        ))}
-      </div>
-      {status && <p className="meta">{status}</p>}
-    </>
+              )}
+            </span>
+          )}
+        </div>
+      ))}
+      {status && (
+        <p className="mono" style={{ fontSize: 11, color: "var(--color-neutral-700)", margin: 0 }}>
+          {status}
+        </p>
+      )}
+    </div>
   );
 }
 

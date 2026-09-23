@@ -7,3 +7,4 @@ jidoka.exe
 .env
 .worktrees/
 .superpowers/
+.playwright-mcp/

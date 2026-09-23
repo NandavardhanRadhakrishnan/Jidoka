@@ -3,6 +3,7 @@ import type { RuleDefinition } from "../domain/rule";
 import type { ToolSpec } from "../ai/provider";
 import { api, type ModelOption, type Rule, type TypeWithRules } from "./api";
 import { StepList } from "./StepList";
+import { RuleFlow } from "./RuleFlow";
 
 export function RuleEditor({
   type,
@@ -25,6 +26,7 @@ export function RuleEditor({
   const [allTypes, setAllTypes] = useState<TypeWithRules[]>([type]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [view, setView] = useState<"flow" | "editor">("flow");
 
   useEffect(() => {
     void api.models().then((r) => setModels(r.models));
@@ -77,38 +79,53 @@ export function RuleEditor({
   }
 
   return (
-    <div>
-      <label>
-        How should tasks of this type be handled?
+    <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
+      <div className="field">
+        <label>How should tasks of this type be handled?</label>
         <textarea
+          className="input"
           rows={4}
           value={description}
           placeholder="e.g. Summarize the email, pull the order status, then assign it to a human"
           onChange={(e) => setDescription(e.target.value)}
         />
-      </label>
-      <button disabled={busy || !description.trim()} onClick={regenerate}>
+      </div>
+      <button className="btn btn-primary" style={{ alignSelf: "flex-start" }} disabled={busy || !description.trim()} onClick={regenerate}>
         {busy ? "Building…" : definition ? "Regenerate" : "Build rule"}
       </button>
 
-      {error && <p className="error">{error}</p>}
+      {error && <p className="error-text">{error}</p>}
 
       {definition && (
         <>
-          <h3>Steps</h3>
-          <StepList
-            steps={definition.steps}
-            onChange={(steps) => setDefinition({ ...definition, steps })}
-            ctx={{ models, tools, types: allTypes }}
-          />
-          <button disabled={busy} onClick={saveAsNewVersion}>
-            Save as new version
-          </button>
-          {draftId && (
-            <button disabled={busy} onClick={activate}>
-              Activate
-            </button>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <h6 style={{ margin: 0 }}>Steps</h6>
+            <div className="seg" style={{ marginLeft: "auto" }}>
+              <button className={`seg-opt ${view === "flow" ? "active" : ""}`} onClick={() => setView("flow")}>
+                Flowchart
+              </button>
+              <button className={`seg-opt ${view === "editor" ? "active" : ""}`} onClick={() => setView("editor")}>
+                Editor
+              </button>
+            </div>
+          </div>
+
+          {view === "flow" ? (
+            <RuleFlow steps={definition.steps} tools={tools} onPick={() => setView("editor")} />
+          ) : (
+            <StepList steps={definition.steps} onChange={(steps) => setDefinition({ ...definition, steps })} ctx={{ models, tools, types: allTypes }} />
           )}
+
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="btn btn-secondary" disabled={busy} onClick={saveAsNewVersion}>
+              Save as new version
+            </button>
+            {draftId && (
+              <button className="btn btn-primary" disabled={busy} onClick={activate}>
+                Activate
+              </button>
+            )}
+          </div>
         </>
       )}
     </div>

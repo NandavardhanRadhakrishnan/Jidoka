@@ -6,7 +6,12 @@ import { TOOL_SEPARATOR, splitToolName } from "./names";
 
 export interface McpLike {
   listTools(): Promise<{
-    tools: { name: string; description?: string; inputSchema: unknown }[];
+    tools: {
+      name: string;
+      description?: string;
+      inputSchema: unknown;
+      annotations?: { readOnlyHint?: boolean };
+    }[];
   }>;
   callTool(args: {
     name: string;
@@ -50,6 +55,7 @@ export class McpManager {
           name: `${server}${TOOL_SEPARATOR}${tool.name}`,
           description: tool.description ?? "",
           inputSchema: (tool.inputSchema ?? { type: "object" }) as Record<string, unknown>,
+          ...(tool.annotations ? { annotations: tool.annotations } : {}),
         });
       }
     }

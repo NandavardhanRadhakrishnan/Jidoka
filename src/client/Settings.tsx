@@ -22,7 +22,6 @@ function fromRows(rows: McpServerRow[]): { name: string; command: string; args: 
 }
 
 export function Settings() {
-  const [open, setOpen] = useState(false);
   const [effective, setEffective] = useState<EffectiveSettings | null>(null);
   const [aiProvider, setAiProvider] = useState("anthropic");
   const [aiApiKey, setAiApiKey] = useState("");
@@ -64,8 +63,8 @@ export function Settings() {
   }
 
   useEffect(() => {
-    if (open) void load();
-  }, [open]);
+    void load();
+  }, []);
 
   async function save() {
     setBusy(true);
@@ -102,152 +101,159 @@ export function Settings() {
     }
   }
 
+  if (!effective) {
+    return (
+      <div className="settings-screen">
+        <p className="text-muted">Loading…</p>
+      </div>
+    );
+  }
+
   return (
-    <>
-      <button className="link" onClick={() => setOpen(true)}>
-        Settings
-      </button>
+    <div className="settings-screen">
+      <section>
+        <h6>AI provider</h6>
+        <div className="settings-grid">
+          <div className="field">
+            <label>Provider</label>
+            <select
+              className="input"
+              value={aiProvider}
+              onChange={(e) => {
+                setAiProvider(e.target.value);
+                setAiModel("");
+              }}
+            >
+              <option value="anthropic">anthropic</option>
+              <option value="openai">openai</option>
+              <option value="agent-sdk">agent-sdk</option>
+            </select>
+          </div>
+          <div className="field">
+            <label>Model</label>
+            <input className="input" value={aiModel} onChange={(e) => setAiModel(e.target.value)} />
+          </div>
+          <div className="field" style={{ gridColumn: "1 / -1" }}>
+            <label>API key {effective.ai.apiKeyConfigured ? "(configured — leave blank to keep it)" : ""}</label>
+            <input className="input" type="password" value={aiApiKey} onChange={(e) => setAiApiKey(e.target.value)} />
+          </div>
+          <div className="field" style={{ gridColumn: "1 / -1" }}>
+            <label>Base URL</label>
+            <input className="input" value={aiBaseUrl} onChange={(e) => setAiBaseUrl(e.target.value)} />
+          </div>
+        </div>
+      </section>
+      <hr className="hr" />
 
-      {open && (
-        <div className="dialog extensions">
-          <h2>Settings</h2>
+      <section>
+        <h6>Agent backend</h6>
+        <div style={{ display: "flex", gap: 22, flexWrap: "wrap", alignItems: "flex-start" }}>
+          <label className="radio">
+            <input type="radio" name="runner" checked={agentRunner === "in-process"} onChange={() => setAgentRunner("in-process")} />
+            <span className="dot" />
+            <span>in-process — API key, parallel runs</span>
+          </label>
+          <label className="radio">
+            <input type="radio" name="runner" checked={agentRunner === "agent-sdk"} onChange={() => setAgentRunner("agent-sdk")} />
+            <span className="dot" />
+            <span>agent-sdk — CLI subscription, 1 run</span>
+          </label>
+        </div>
+        <div className="settings-grid" style={{ marginTop: 12 }}>
+          <div className="field">
+            <label>Model</label>
+            <input className="input" value={agentModel} onChange={(e) => setAgentModel(e.target.value)} />
+          </div>
+          <div className="field">
+            <label>Concurrency</label>
+            <input className="input" type="number" min={1} value={agentConcurrency} onChange={(e) => setAgentConcurrency(Number(e.target.value))} />
+          </div>
+          <div className="field">
+            <label>Max budget (USD)</label>
+            <input className="input" value={agentMaxBudget} onChange={(e) => setAgentMaxBudget(e.target.value)} />
+          </div>
+        </div>
+      </section>
+      <hr className="hr" />
 
-          {!effective ? (
-            <p className="meta">Loading…</p>
-          ) : (
-            <>
-              <h3>AI provider</h3>
-              <label>
-                Provider
-                <select
-                  value={aiProvider}
-                  onChange={(e) => {
-                    setAiProvider(e.target.value);
-                    setAiModel("");
-                  }}
-                >
-                  <option value="anthropic">anthropic</option>
-                  <option value="openai">openai</option>
-                  <option value="agent-sdk">agent-sdk</option>
-                </select>
-              </label>
-              <label>
-                API key {effective.ai.apiKeyConfigured ? "(configured — leave blank to keep it)" : ""}
-                <input type="password" value={aiApiKey} onChange={(e) => setAiApiKey(e.target.value)} />
-              </label>
-              <label>
-                Model
-                <input value={aiModel} onChange={(e) => setAiModel(e.target.value)} />
-              </label>
-              <label>
-                Base URL
-                <input value={aiBaseUrl} onChange={(e) => setAiBaseUrl(e.target.value)} />
-              </label>
-
-              <h3>Agent runner</h3>
-              <label>
-                Runner
-                <select value={agentRunner} onChange={(e) => setAgentRunner(e.target.value)}>
-                  <option value="in-process">in-process</option>
-                  <option value="agent-sdk">agent-sdk</option>
-                </select>
-              </label>
-              <label>
-                Model
-                <input value={agentModel} onChange={(e) => setAgentModel(e.target.value)} />
-              </label>
-              <label>
-                Concurrency
-                <input
-                  type="number"
-                  min={1}
-                  value={agentConcurrency}
-                  onChange={(e) => setAgentConcurrency(Number(e.target.value))}
-                />
-              </label>
-              <label>
-                Max budget (USD)
-                <input value={agentMaxBudget} onChange={(e) => setAgentMaxBudget(e.target.value)} />
-              </label>
-
-              <h3>MCP servers</h3>
-              {mcpRows.map((row, index) => (
-                <div key={index} className="extension-row">
-                  <label>
-                    Name
-                    <input
-                      value={row.name}
-                      onChange={(e) =>
-                        setMcpRows(mcpRows.map((r, i) => (i === index ? { ...r, name: e.target.value } : r)))
-                      }
-                    />
-                  </label>
-                  <label>
-                    Command
-                    <input
-                      value={row.command}
-                      onChange={(e) =>
-                        setMcpRows(mcpRows.map((r, i) => (i === index ? { ...r, command: e.target.value } : r)))
-                      }
-                    />
-                  </label>
-                  <label>
-                    Args (space-separated)
-                    <input
-                      value={row.args}
-                      onChange={(e) =>
-                        setMcpRows(mcpRows.map((r, i) => (i === index ? { ...r, args: e.target.value } : r)))
-                      }
-                    />
-                  </label>
-                  <button className="link" onClick={() => setMcpRows(mcpRows.filter((_, i) => i !== index))}>
+      <section>
+        <h6>MCP servers</h6>
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Command</th>
+              <th>Args</th>
+              <th style={{ width: 90 }}></th>
+            </tr>
+          </thead>
+          <tbody>
+            {mcpRows.map((row, index) => (
+              <tr key={index}>
+                <td>
+                  <input
+                    className="input"
+                    value={row.name}
+                    onChange={(e) => setMcpRows(mcpRows.map((r, i) => (i === index ? { ...r, name: e.target.value } : r)))}
+                  />
+                </td>
+                <td>
+                  <input
+                    className="input mono"
+                    value={row.command}
+                    onChange={(e) => setMcpRows(mcpRows.map((r, i) => (i === index ? { ...r, command: e.target.value } : r)))}
+                  />
+                </td>
+                <td>
+                  <input
+                    className="input mono"
+                    value={row.args}
+                    onChange={(e) => setMcpRows(mcpRows.map((r, i) => (i === index ? { ...r, args: e.target.value } : r)))}
+                  />
+                </td>
+                <td>
+                  <button className="btn btn-ghost" style={{ fontSize: 12, padding: 0 }} onClick={() => setMcpRows(mcpRows.filter((_, i) => i !== index))}>
                     Remove
                   </button>
-                </div>
-              ))}
-              <button className="link" onClick={() => setMcpRows([...mcpRows, { name: "", command: "", args: "" }])}>
-                Add server
-              </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <button className="btn btn-secondary" style={{ marginTop: 10 }} onClick={() => setMcpRows([...mcpRows, { name: "", command: "", args: "" }])}>
+          Add server
+        </button>
+      </section>
+      <hr className="hr" />
 
-              <h3>Sources</h3>
-              <label>
-                Sample folder
-                <input value={sampleDir} onChange={(e) => setSampleDir(e.target.value)} />
-              </label>
-              <label>
-                Extensions folder
-                <input value={extensionsDir} onChange={(e) => setExtensionsDir(e.target.value)} />
-              </label>
-              <label>
-                Poll interval (ms)
-                <input
-                  type="number"
-                  min={1000}
-                  value={pollIntervalMs}
-                  onChange={(e) => setPollIntervalMs(Number(e.target.value))}
-                />
-              </label>
-
-              <h3>Handoff</h3>
-              <label>
-                Terminal launcher
-                <input value={terminalCommand} onChange={(e) => setTerminalCommand(e.target.value)} />
-              </label>
-
-              {error && <p className="error">{error}</p>}
-              {saved && <p className="meta">Saved — restart the server for this to take effect.</p>}
-
-              <button disabled={busy} onClick={() => void save()}>
-                {busy ? "Saving…" : "Save"}
-              </button>
-            </>
-          )}
-
-          <button className="secondary" onClick={() => setOpen(false)}>
-            Close
-          </button>
+      <section>
+        <h6>Ingestion</h6>
+        <div className="settings-grid">
+          <div className="field">
+            <label>Sample folder</label>
+            <input className="input mono" value={sampleDir} onChange={(e) => setSampleDir(e.target.value)} />
+          </div>
+          <div className="field">
+            <label>Poll interval (ms)</label>
+            <input className="input mono" type="number" min={1000} value={pollIntervalMs} onChange={(e) => setPollIntervalMs(Number(e.target.value))} />
+          </div>
+          <div className="field">
+            <label>Extensions folder</label>
+            <input className="input mono" value={extensionsDir} onChange={(e) => setExtensionsDir(e.target.value)} />
+          </div>
+          <div className="field">
+            <label>Terminal launcher</label>
+            <input className="input mono" value={terminalCommand} onChange={(e) => setTerminalCommand(e.target.value)} />
+          </div>
         </div>
-      )}
-    </>
+      </section>
+
+      {error && <p className="error-text">{error}</p>}
+      {saved && <p className="text-muted">Saved — restart the server for this to take effect.</p>}
+
+      <button className="btn btn-primary" style={{ alignSelf: "flex-start", marginTop: 8 }} disabled={busy} onClick={() => void save()}>
+        {busy ? "Saving…" : "Save"}
+      </button>
+    </div>
   );
 }

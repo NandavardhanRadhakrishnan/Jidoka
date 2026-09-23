@@ -1,0 +1,11 @@
+{
+  "id": "youtube-channel-feed",
+  "name": "YouTube Channel Videos",
+  "version": "1.0.0",
+  "summary": "Reads the public list of recent videos from one YouTube channel and turns each new video into a task.",
+  "readOnly": true,
+  "auth": {
+    "mode": "api-key",
+    "label": "Not needed for this public feed (enter any value, e.g. 'none')"
+  }
+}
