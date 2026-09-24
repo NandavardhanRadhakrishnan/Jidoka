@@ -124,6 +124,16 @@ export const api = {
     json<{ task: Task }>(`/api/tasks/${taskId}/skip-onboarding`, { method: "POST" }).then(
       (r) => r.task,
     ),
+  resolveDuplicate: (taskId: string, isDuplicate: boolean) =>
+    json<{ task?: Task; merged?: boolean; intoTaskId?: string }>(`/api/tasks/${taskId}/dedup`, {
+      method: "POST",
+      body: JSON.stringify({ isDuplicate }),
+    }),
+  markDuplicate: (taskId: string, ofTaskId: string) =>
+    json<{ merged: true; intoTaskId: string }>(`/api/tasks/${taskId}/mark-duplicate`, {
+      method: "POST",
+      body: JSON.stringify({ ofTaskId }),
+    }),
   patchType: (typeId: string, patch: { name?: string; description?: string; mergeInto?: string }) =>
     json<{ type?: TaskType; merged?: boolean }>(`/api/types/${typeId}`, {
       method: "PATCH",

@@ -29,6 +29,7 @@ test("every task state maps to exactly one of the three lanes", () => {
     "ingested",
     "needs_type_confirmation",
     "needs_onboarding",
+    "needs_dedup_confirmation",
     "processing",
     "assigned_ai",
     "assigned_human",
@@ -38,6 +39,10 @@ test("every task state maps to exactly one of the three lanes", () => {
   for (const state of states) {
     expect(["needs", "running", "settled"]).toContain(LANE_OF[state]);
   }
+});
+
+test("needs_dedup_confirmation lands in the needs lane specifically", () => {
+  expect(LANE_OF.needs_dedup_confirmation).toBe("needs");
 });
 
 test("groupByLane buckets tasks and leaves empty lanes present", () => {
