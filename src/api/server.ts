@@ -13,6 +13,8 @@ import {
   onboardType,
   onTaskIngested,
   skipOnboarding,
+  resolveDuplicate,
+  markDuplicate,
   type AppDeps,
 } from "../orchestrator";
 
@@ -125,6 +127,40 @@ export function createServer(deps: AppDeps, extraRoutes?: Hono): Hono {
     const id = c.req.param("id");
     if (!getTask(deps.db, id)) return c.json({ error: "unknown task" }, 404);
     return c.json({ task: await skipOnboarding(deps, id) });
+  });
+
+  app.post("/api/tasks/:id/dedup", async (c) => {
+    const id = c.req.param("id");
+    const task = getTask(deps.db, id);
+    if (!task) return c.json({ error: "unknown task" }, 404);
+    const input = await readJson<{ isDuplicate?: boolean }>(c);
+    if (typeof input?.isDuplicate !== "boolean") return c.json({ error: "isDuplicate is required" }, 400);
+    if (!task.dedupCandidateId) return c.json({ error: "this task has no pending duplicate candidate" }, 400);
+
+    try {
+      const result = await resolveDuplicate(deps, id, input.isDuplicate);
+      return input.isDuplicate
+        ? c.json({ merged: true, intoTaskId: task.dedupCandidateId })
+        : c.json({ task: result });
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : String(error) }, 409);
+    }
+  });
+
+  app.post("/api/tasks/:id/mark-duplicate", async (c) => {
+    const id = c.req.param("id");
+    if (!getTask(deps.db, id)) return c.json({ error: "unknown task" }, 404);
+    const input = await readJson<{ ofTaskId?: string }>(c);
+    if (!input?.ofTaskId) return c.json({ error: "ofTaskId is required" }, 400);
+    if (input.ofTaskId === id) return c.json({ error: "a task cannot be a duplicate of itself" }, 400);
+    if (!getTask(deps.db, input.ofTaskId)) return c.json({ error: "unknown target task" }, 404);
+
+    try {
+      markDuplicate(deps, id, input.ofTaskId);
+      return c.json({ merged: true, intoTaskId: input.ofTaskId });
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : String(error) }, 409);
+    }
   });
 
   app.patch("/api/types/:id", async (c) => {

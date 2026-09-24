@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
 import { openDb, migrate } from "../../src/db";
-import { getTask, insertTask } from "../../src/repo/tasks";
+import { getTask, insertTask, updateTask, deleteTask } from "../../src/repo/tasks";
 import { insertTaskType } from "../../src/repo/taskTypes";
 import { createServer } from "../../src/api/server";
 import type { AppDeps } from "../../src/orchestrator";
@@ -347,4 +347,123 @@ test("POST /api/types/:id/rules rejects an invalid definition with 400", async (
   );
 
   expect(response.status).toBe(400);
+});
+
+test("POST /api/tasks/:id/dedup confirms a duplicate, deletes it, and records the merge on the target", async () => {
+  const { deps, fetch } = app([]);
+  const target = insertTask(deps.db, { sourceId: "outlook", externalId: "t0", title: "Original", body: "b" });
+  const dup = insertTask(deps.db, { sourceId: "github", externalId: "t1", title: "Duplicate", body: "b" });
+  updateTask(deps.db, dup.id, { state: "needs_dedup_confirmation", dedupCandidateId: target.id });
+
+  const response = await fetch(
+    new Request(`http://localhost/api/tasks/${dup.id}/dedup`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ isDuplicate: true }),
+    }),
+  );
+
+  expect(response.status).toBe(200);
+  const body = (await response.json()) as { merged: boolean; intoTaskId: string };
+  expect(body.merged).toBe(true);
+  expect(body.intoTaskId).toBe(target.id);
+  expect(getTask(deps.db, dup.id)).toBeNull();
+  expect(getTask(deps.db, target.id)?.context.mergedFrom).toBeDefined();
+});
+
+test("POST /api/tasks/:id/dedup on a task with no pending candidate is rejected", async () => {
+  const { deps, fetch } = app([]);
+  const task = insertTask(deps.db, { sourceId: "outlook", externalId: "t0", title: "Solo", body: "b" });
+
+  const response = await fetch(
+    new Request(`http://localhost/api/tasks/${task.id}/dedup`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ isDuplicate: true }),
+    }),
+  );
+
+  expect(response.status).toBe(400);
+});
+
+test("POST /api/tasks/:id/dedup on an unknown task 404s", async () => {
+  const { fetch } = app([]);
+  const response = await fetch(
+    new Request("http://localhost/api/tasks/ghost/dedup", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ isDuplicate: true }),
+    }),
+  );
+  expect(response.status).toBe(404);
+});
+
+test("POST /api/tasks/:id/dedup surfaces a 409, not a crash, when the candidate task is gone", async () => {
+  const { deps, fetch } = app([]);
+  const candidate = insertTask(deps.db, { sourceId: "outlook", externalId: "t0", title: "Original", body: "b" });
+  const dup = insertTask(deps.db, { sourceId: "github", externalId: "t1", title: "Duplicate", body: "b" });
+  updateTask(deps.db, dup.id, { state: "needs_dedup_confirmation", dedupCandidateId: candidate.id });
+  deleteTask(deps.db, candidate.id);
+
+  const response = await fetch(
+    new Request(`http://localhost/api/tasks/${dup.id}/dedup`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ isDuplicate: true }),
+    }),
+  );
+
+  expect(response.status).toBe(409);
+});
+
+test("POST /api/tasks/:id/mark-duplicate merges into a chosen target of any state", async () => {
+  const { deps, fetch } = app([]);
+  const target = insertTask(deps.db, { sourceId: "outlook", externalId: "t0", title: "Original", body: "b" });
+  updateTask(deps.db, target.id, { state: "done" });
+  const dup = insertTask(deps.db, { sourceId: "github", externalId: "t1", title: "Duplicate", body: "b" });
+
+  const response = await fetch(
+    new Request(`http://localhost/api/tasks/${dup.id}/mark-duplicate`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ofTaskId: target.id }),
+    }),
+  );
+
+  expect(response.status).toBe(200);
+  expect(getTask(deps.db, dup.id)).toBeNull();
+});
+
+test("POST /api/tasks/:id/mark-duplicate rejects an unknown target, self-reference, and a processing duplicate", async () => {
+  const { deps, fetch } = app([]);
+  const target = insertTask(deps.db, { sourceId: "outlook", externalId: "t0", title: "Original", body: "b" });
+  const dup = insertTask(deps.db, { sourceId: "github", externalId: "t1", title: "Duplicate", body: "b" });
+
+  const unknownTarget = await fetch(
+    new Request(`http://localhost/api/tasks/${dup.id}/mark-duplicate`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ofTaskId: "ghost" }),
+    }),
+  );
+  expect(unknownTarget.status).toBe(404);
+
+  const selfMerge = await fetch(
+    new Request(`http://localhost/api/tasks/${dup.id}/mark-duplicate`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ofTaskId: dup.id }),
+    }),
+  );
+  expect(selfMerge.status).toBe(400);
+
+  updateTask(deps.db, dup.id, { state: "processing" });
+  const whileProcessing = await fetch(
+    new Request(`http://localhost/api/tasks/${dup.id}/mark-duplicate`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ofTaskId: target.id }),
+    }),
+  );
+  expect(whileProcessing.status).toBe(409);
 });
