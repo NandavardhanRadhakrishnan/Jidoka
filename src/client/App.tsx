@@ -74,6 +74,11 @@ export function App() {
     await refresh();
   }
 
+  async function markDuplicate(taskId: string, ofTaskId: string) {
+    await api.markDuplicate(taskId, ofTaskId);
+    await refresh();
+  }
+
   const showingOnboarding = !!(onboardingTask && onboardingType);
 
   return (
@@ -190,7 +195,13 @@ export function App() {
       </main>
 
       {selectedTask && !showingOnboarding && (
-        <TaskDetail task={selectedTask} onChanged={refresh} onClose={() => setSelectedTaskId(null)} />
+        <TaskDetail
+          task={selectedTask}
+          allTasks={tasks}
+          onChanged={refresh}
+          onClose={() => setSelectedTaskId(null)}
+          onMarkDuplicate={(ofTaskId) => markDuplicate(selectedTask.id, ofTaskId)}
+        />
       )}
 
       {modal === "newtask" && <NewTask onCreated={refresh} onClose={() => setModal(null)} />}

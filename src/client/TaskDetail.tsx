@@ -12,17 +12,39 @@ interface StepLogEntry {
   error?: string;
 }
 
+interface MergedFromRecord {
+  taskId: string;
+  sourceId: string;
+  externalId: string;
+  url: string | null;
+  title: string;
+  mergedAt: string;
+}
+
 /** Context keys the rule writes for its own bookkeeping, not for reading. */
-const INTERNAL_KEYS = new Set(["ruleLog", "completedAt", "completionNote", "error", "handoff", "pickedUpAt"]);
+const INTERNAL_KEYS = new Set([
+  "ruleLog",
+  "completedAt",
+  "completionNote",
+  "error",
+  "handoff",
+  "pickedUpAt",
+  "mergedFrom",
+  "dedupRationale",
+]);
 
 export function TaskDetail({
   task,
+  allTasks,
   onChanged,
   onClose,
+  onMarkDuplicate,
 }: {
   task: Task;
+  allTasks: Task[];
   onChanged: () => Promise<void>;
   onClose: () => void;
+  onMarkDuplicate: (ofTaskId: string) => Promise<void>;
 }) {
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
@@ -81,12 +103,31 @@ export function TaskDetail({
     }
   }
 
+  const mergedFrom = Array.isArray(task.context.mergedFrom)
+    ? (task.context.mergedFrom as MergedFromRecord[])
+    : [];
+
+  const [dedupOpen, setDedupOpen] = useState(false);
+  const [dedupQuery, setDedupQuery] = useState("");
+  const dedupMatches = dedupOpen
+    ? allTasks
+        .filter((t) => t.id !== task.id && t.title.toLowerCase().includes(dedupQuery.trim().toLowerCase()))
+        .slice(0, 8)
+    : [];
+
+  async function markAsDuplicate(ofTaskId: string) {
+    await act(() => onMarkDuplicate(ofTaskId));
+  }
+
   const tone =
     task.state === "done"
       ? "var(--color-neutral-500)"
       : task.state === "failed"
         ? "var(--color-accent-800)"
-        : task.state === "assigned_human" || task.state === "needs_type_confirmation" || task.state === "needs_onboarding"
+        : task.state === "assigned_human" ||
+            task.state === "needs_type_confirmation" ||
+            task.state === "needs_onboarding" ||
+            task.state === "needs_dedup_confirmation"
           ? "var(--color-accent)"
           : "var(--color-neutral-800)";
 
@@ -130,6 +171,31 @@ export function TaskDetail({
         </div>
 
         <div className="drawer-body">
+          {mergedFrom.length > 0 && (
+            <section className="drawer-section">
+              <h6 style={{ margin: 0 }}>Merged from</h6>
+              {mergedFrom.map((m) => (
+                <div key={m.taskId} className="artifact">
+                  <div className="head">
+                    <span className="mono key">{m.sourceId}</span>
+                    <span className="provenance-badge provenance-unknown" style={{ marginLeft: "auto" }}>
+                      duplicate
+                    </span>
+                  </div>
+                  <div className="content">
+                    {m.url ? (
+                      <a href={m.url} target="_blank" rel="noreferrer">
+                        {m.title}
+                      </a>
+                    ) : (
+                      m.title
+                    )}
+                  </div>
+                </div>
+              ))}
+            </section>
+          )}
+
           {outputs.length > 0 && (
             <section className="drawer-section">
               <h6 style={{ margin: 0 }}>What the rule produced</h6>
@@ -206,6 +272,63 @@ export function TaskDetail({
               )}
             </section>
           )}
+
+          <section className="drawer-section">
+            {!dedupOpen ? (
+              <button
+                className="btn btn-secondary"
+                style={{ alignSelf: "flex-start" }}
+                disabled={task.state === "processing"}
+                title={task.state === "processing" ? "Can't merge away a task while its rule is running" : undefined}
+                onClick={() => setDedupOpen(true)}
+              >
+                Mark as duplicate of…
+              </button>
+            ) : (
+              <>
+                <div className="field">
+                  <label>Find the task this duplicates</label>
+                  <input
+                    className="input"
+                    autoFocus
+                    value={dedupQuery}
+                    placeholder="Search by title…"
+                    onChange={(e) => setDedupQuery(e.target.value)}
+                  />
+                </div>
+                {dedupQuery.trim() && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {dedupMatches.length === 0 && <span className="text-muted">No matching tasks</span>}
+                    {dedupMatches.map((match) => (
+                      <button
+                        key={match.id}
+                        className="candidate-btn"
+                        disabled={busy}
+                        onClick={() => void markAsDuplicate(match.id)}
+                      >
+                        <span className="row">
+                          <span className="name">{match.title}</span>
+                        </span>
+                        <span className="desc">
+                          {match.sourceId} · {match.state.replace(/_/g, " ")}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <button
+                  className="btn btn-ghost"
+                  style={{ fontSize: 11, padding: 0, alignSelf: "flex-start" }}
+                  onClick={() => {
+                    setDedupOpen(false);
+                    setDedupQuery("");
+                  }}
+                >
+                  Cancel
+                </button>
+              </>
+            )}
+          </section>
 
           {task.state === "done" ? (
             <section className="drawer-section">
