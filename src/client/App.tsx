@@ -11,6 +11,7 @@ import { Rules } from "./Rules";
 import { Settings } from "./Settings";
 import { Icon } from "./icons";
 import { LANE_OF } from "./columns";
+import { taskUrl, readTaskId } from "./taskUrl";
 
 type Screen = "board" | "types" | "extensions" | "settings";
 
@@ -35,7 +36,9 @@ export function App() {
   const [screen, setScreen] = useState<Screen>("board");
   const [railOpen, setRailOpen] = useState(true);
   const [hoverNav, setHoverNav] = useState<Screen | null>(null);
-  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(() =>
+    readTaskId(window.location.search),
+  );
   const [onboardingTaskId, setOnboardingTaskId] = useState<string | null>(null);
   const [modal, setModal] = useState<"newtask" | "signin" | null>(null);
   const [settledFrom, setSettledFrom] = useState("");
@@ -55,6 +58,17 @@ export function App() {
 
   useEffect(() => {
     void api.settingsGet().then((r) => setSettings(r.effective));
+  }, []);
+
+  useEffect(() => {
+    const onPopState = () => setSelectedTaskId(readTaskId(window.location.search));
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+
+  const openTask = useCallback((id: string | null) => {
+    setSelectedTaskId(id);
+    window.history.pushState(null, "", id ? taskUrl(id) : window.location.pathname);
   }, []);
 
   const selectedTask = selectedTaskId ? (tasks.find((t) => t.id === selectedTaskId) ?? null) : null;
@@ -177,7 +191,7 @@ export function App() {
             <Board
               tasks={tasks}
               types={types}
-              onSelect={(t) => setSelectedTaskId(t.id)}
+              onSelect={(t) => openTask(t.id)}
               onOnboard={(t) => setOnboardingTaskId(t.id)}
               onConfirmType={confirmType}
               onResolveDuplicate={resolveDuplicate}
@@ -199,7 +213,7 @@ export function App() {
           task={selectedTask}
           allTasks={tasks}
           onChanged={refresh}
-          onClose={() => setSelectedTaskId(null)}
+          onClose={() => openTask(null)}
           onMarkDuplicate={(ofTaskId) => markDuplicate(selectedTask.id, ofTaskId)}
         />
       )}
