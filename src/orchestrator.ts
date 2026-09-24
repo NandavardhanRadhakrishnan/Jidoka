@@ -4,7 +4,7 @@ import type { ModelProviderId } from "./ai/models";
 import { modelCatalog } from "./ai/models";
 import type { Task } from "./domain/task";
 import type { Rule } from "./domain/rule";
-import { getTask, listTasks, updateTask } from "./repo/tasks";
+import { getTask, listTasks, updateTask, deleteTask } from "./repo/tasks";
 import {
   getTaskType,
   insertTaskType,
@@ -19,6 +19,7 @@ import {
   listRules,
 } from "./repo/rules";
 import { triageTask } from "./triage/triage";
+import { checkForDuplicate } from "./dedup/dedup";
 import { runRule, type ToolCaller } from "./rule/executor";
 import { ruleUsesTaskUrl } from "./rule/template";
 import type { AgentRunner } from "./agent/runner";
@@ -34,6 +35,23 @@ export interface AppDeps {
 }
 
 export async function onTaskIngested(deps: AppDeps, task: Task): Promise<Task> {
+  const candidates = listTasks(deps.db)
+    .filter((t) => t.id !== task.id && !["done", "failed", "needs_dedup_confirmation"].includes(t.state))
+    .slice(0, 30);
+
+  const match = await checkForDuplicate(deps.provider, task, candidates);
+  if (match) {
+    return updateTask(deps.db, task.id, {
+      state: "needs_dedup_confirmation",
+      dedupCandidateId: match.taskId,
+      context: { ...task.context, dedupRationale: match.rationale },
+    });
+  }
+
+  return triageAndAssign(deps, task);
+}
+
+async function triageAndAssign(deps: AppDeps, task: Task): Promise<Task> {
   const { outcome, deadline } = await triageTask(deps.provider, task, listTaskTypes(deps.db));
 
   if (outcome.kind === "ambiguous") {
@@ -224,4 +242,63 @@ export async function skipOnboarding(deps: AppDeps, taskId: string): Promise<Tas
   const task = getTask(deps.db, taskId);
   if (!task) throw new Error(`skipOnboarding: unknown task ${taskId}`);
   return updateTask(deps.db, taskId, { state: "assigned_human", assignee: "human" });
+}
+
+interface MergedFromRecord {
+  taskId: string;
+  sourceId: string;
+  externalId: string;
+  url: string | null;
+  title: string;
+  mergedAt: string;
+}
+
+function asMergedFromArray(value: unknown): MergedFromRecord[] {
+  return Array.isArray(value) ? (value as MergedFromRecord[]) : [];
+}
+
+/** The one place a duplicate task's row goes away: appends its source
+ *  reference onto the kept task's context, then deletes it outright. */
+export function mergeTasks(deps: AppDeps, duplicateTaskId: string, intoTaskId: string): Task {
+  const duplicate = getTask(deps.db, duplicateTaskId);
+  const target = getTask(deps.db, intoTaskId);
+  if (!duplicate) throw new Error(`mergeTasks: unknown task ${duplicateTaskId}`);
+  if (!target) throw new Error(`mergeTasks: unknown task ${intoTaskId}`);
+  if (duplicate.state === "processing") {
+    throw new Error("mergeTasks: cannot merge a task that is currently processing");
+  }
+
+  const record: MergedFromRecord = {
+    taskId: duplicate.id,
+    sourceId: duplicate.sourceId,
+    externalId: duplicate.externalId,
+    url: duplicate.url,
+    title: duplicate.title,
+    mergedAt: new Date().toISOString(),
+  };
+  const updated = updateTask(deps.db, target.id, {
+    context: { ...target.context, mergedFrom: [...asMergedFromArray(target.context.mergedFrom), record] },
+  });
+  deleteTask(deps.db, duplicate.id);
+  return updated;
+}
+
+/** A human resolving an AI-detected `needs_dedup_confirmation` pause. */
+export async function resolveDuplicate(deps: AppDeps, taskId: string, isDuplicate: boolean): Promise<Task> {
+  const task = getTask(deps.db, taskId);
+  if (!task) throw new Error(`resolveDuplicate: unknown task ${taskId}`);
+  if (!task.dedupCandidateId) {
+    throw new Error(`resolveDuplicate: task ${taskId} has no pending duplicate candidate`);
+  }
+
+  if (isDuplicate) return mergeTasks(deps, task.id, task.dedupCandidateId);
+
+  const cleared = updateTask(deps.db, task.id, { dedupCandidateId: null });
+  return triageAndAssign(deps, cleared);
+}
+
+/** A human manually tagging any task as a duplicate of any other, independent of detection. */
+export function markDuplicate(deps: AppDeps, taskId: string, ofTaskId: string): Task {
+  if (taskId === ofTaskId) throw new Error("markDuplicate: a task cannot be a duplicate of itself");
+  return mergeTasks(deps, taskId, ofTaskId);
 }

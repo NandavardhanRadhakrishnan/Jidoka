@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
 import { openDb, migrate } from "../src/db";
-import { insertTask, getTask } from "../src/repo/tasks";
+import { insertTask, getTask, deleteTask, updateTask } from "../src/repo/tasks";
 import { insertTaskType, getTaskType, listTaskTypes } from "../src/repo/taskTypes";
 import { insertRule, activateRule, getActiveRule } from "../src/repo/rules";
 import {
@@ -9,6 +9,9 @@ import {
   skipOnboarding,
   onboardType,
   activateTypeRule,
+  mergeTasks,
+  resolveDuplicate,
+  markDuplicate,
   type AppDeps,
 } from "../src/orchestrator";
 import type { AiProvider } from "../src/ai/provider";
@@ -303,4 +306,128 @@ test("a task with a URL runs normally against a rule that needs {{task.url}}", a
 
   expect(result.state).toBe("assigned_human");
   expect(result.context.review).toBe("Looks fine");
+});
+
+test("a task matching an open candidate is flagged for dedup confirmation, not triaged", async () => {
+  const db = freshDb();
+  const existing = insertTask(db, { ...sample, externalId: "m0" });
+  const task = insertTask(db, { ...sample, externalId: "m1" });
+  const app = deps(db, [
+    JSON.stringify({ duplicateOfTaskId: existing.id, confidence: 0.9, rationale: "same order number" }),
+  ]);
+
+  const result = await onTaskIngested(app, task);
+
+  expect(result.state).toBe("needs_dedup_confirmation");
+  expect(result.dedupCandidateId).toBe(existing.id);
+  expect(result.context.dedupRationale).toBe("same order number");
+});
+
+test("a task assigned to a human is still a valid dedup candidate", async () => {
+  const db = freshDb();
+  const existingRaw = insertTask(db, { ...sample, externalId: "m0" });
+  const existing = updateTask(db, existingRaw.id, { state: "assigned_human", assignee: "human" });
+  const task = insertTask(db, { ...sample, externalId: "m1" });
+  const app = deps(db, [
+    JSON.stringify({ duplicateOfTaskId: existing.id, confidence: 0.8, rationale: "same customer, same issue" }),
+  ]);
+
+  const result = await onTaskIngested(app, task);
+
+  expect(result.state).toBe("needs_dedup_confirmation");
+  expect(result.dedupCandidateId).toBe(existing.id);
+});
+
+test("a done task is not a dedup candidate, so a new task proceeds straight to triage", async () => {
+  const db = freshDb();
+  const type = insertTaskType(db, { name: "Customer email", description: "d" });
+  const doneRaw = insertTask(db, { ...sample, externalId: "m0" });
+  updateTask(db, doneRaw.id, { state: "done" });
+  const task = insertTask(db, { ...sample, externalId: "m1" });
+  const app = deps(db, [JSON.stringify({ scores: [{ typeId: type.id, confidence: 0.95 }], proposal: null })]);
+
+  const result = await onTaskIngested(app, task);
+
+  expect(result.state).not.toBe("needs_dedup_confirmation");
+  expect(result.typeId).toBe(type.id);
+});
+
+test("resolveDuplicate(true) merges the duplicate into its candidate and deletes it", async () => {
+  const db = freshDb();
+  const target = insertTask(db, { ...sample, externalId: "m0" });
+  const dupRaw = insertTask(db, { ...sample, externalId: "m1" });
+  const dup = updateTask(db, dupRaw.id, { state: "needs_dedup_confirmation", dedupCandidateId: target.id });
+  const app = deps(db, []);
+
+  const merged = await resolveDuplicate(app, dup.id, true);
+
+  expect(merged.id).toBe(target.id);
+  expect(merged.context.mergedFrom).toEqual([
+    expect.objectContaining({ taskId: dup.id, sourceId: dup.sourceId, externalId: dup.externalId }),
+  ]);
+  expect(getTask(db, dup.id)).toBeNull();
+});
+
+test("resolveDuplicate(false) clears the candidate and proceeds through triage", async () => {
+  const db = freshDb();
+  const type = insertTaskType(db, { name: "Customer email", description: "d" });
+  const other = insertTask(db, { ...sample, externalId: "m0" });
+  const taskRaw = insertTask(db, { ...sample, externalId: "m1" });
+  const task = updateTask(db, taskRaw.id, { state: "needs_dedup_confirmation", dedupCandidateId: other.id });
+  const app = deps(db, [JSON.stringify({ scores: [{ typeId: type.id, confidence: 0.95 }], proposal: null })]);
+
+  const result = await resolveDuplicate(app, task.id, false);
+
+  expect(result.dedupCandidateId).toBeNull();
+  expect(result.typeId).toBe(type.id);
+  expect(getTask(db, other.id)).not.toBeNull();
+});
+
+test("markDuplicate merges a task into a chosen target regardless of dedup state", async () => {
+  const db = freshDb();
+  const targetRaw = insertTask(db, { ...sample, externalId: "m0" });
+  const target = updateTask(db, targetRaw.id, { state: "done" });
+  const dup = insertTask(db, { ...sample, externalId: "m1" });
+  const app = deps(db, []);
+
+  const merged = markDuplicate(app, dup.id, target.id);
+
+  expect(merged.id).toBe(target.id);
+  expect((merged.context.mergedFrom as unknown[]).length).toBe(1);
+  expect(getTask(db, dup.id)).toBeNull();
+});
+
+test("mergeTasks refuses to merge away a task that is currently processing", () => {
+  const db = freshDb();
+  const target = insertTask(db, { ...sample, externalId: "m0" });
+  const dupRaw = insertTask(db, { ...sample, externalId: "m1" });
+  const dup = updateTask(db, dupRaw.id, { state: "processing" });
+  const app = deps(db, []);
+
+  expect(() => mergeTasks(app, dup.id, target.id)).toThrow(/processing/);
+});
+
+test("two different duplicates merging into the same target both record their mergedFrom entries", () => {
+  const db = freshDb();
+  const target = insertTask(db, { ...sample, externalId: "m0" });
+  const dupA = insertTask(db, { ...sample, externalId: "m1" });
+  const dupB = insertTask(db, { ...sample, externalId: "m2" });
+  const app = deps(db, []);
+
+  mergeTasks(app, dupA.id, target.id);
+  const merged = mergeTasks(app, dupB.id, target.id);
+
+  const recorded = merged.context.mergedFrom as { taskId: string }[];
+  expect(recorded.map((r) => r.taskId)).toEqual([dupA.id, dupB.id]);
+});
+
+test("resolveDuplicate surfaces a clear error rather than crashing when the candidate task is gone", async () => {
+  const db = freshDb();
+  const candidate = insertTask(db, { ...sample, externalId: "m0" });
+  const taskRaw = insertTask(db, { ...sample, externalId: "m1" });
+  const task = updateTask(db, taskRaw.id, { state: "needs_dedup_confirmation", dedupCandidateId: candidate.id });
+  deleteTask(db, candidate.id);
+  const app = deps(db, []);
+
+  await expect(resolveDuplicate(app, task.id, true)).rejects.toThrow(/unknown task/);
 });
