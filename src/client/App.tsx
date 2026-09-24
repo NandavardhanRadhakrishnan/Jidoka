@@ -69,6 +69,11 @@ export function App() {
     await refresh();
   }
 
+  async function resolveDuplicate(taskId: string, isDuplicate: boolean) {
+    await api.resolveDuplicate(taskId, isDuplicate);
+    await refresh();
+  }
+
   const showingOnboarding = !!(onboardingTask && onboardingType);
 
   return (
@@ -170,6 +175,7 @@ export function App() {
               onSelect={(t) => setSelectedTaskId(t.id)}
               onOnboard={(t) => setOnboardingTaskId(t.id)}
               onConfirmType={confirmType}
+              onResolveDuplicate={resolveDuplicate}
               settledFrom={settledFrom}
               settledTo={settledTo}
             />

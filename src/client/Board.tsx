@@ -13,20 +13,27 @@ function laneTone(lane: "needs" | "running" | "settled", failed: boolean): strin
 function TaskCard({
   task,
   types,
+  allTasks,
   onOpen,
   onOnboard,
   onConfirmType,
+  onResolveDuplicate,
 }: {
   task: Task;
   types: TypeWithRules[];
+  allTasks: Task[];
   onOpen: () => void;
   onOnboard: () => void;
   onConfirmType: (typeId: string) => Promise<void>;
+  onResolveDuplicate: (isDuplicate: boolean) => Promise<void>;
 }) {
   const [triaging, setTriaging] = useState(false);
   const [busy, setBusy] = useState(false);
   const tone = laneTone(
-    task.state === "needs_type_confirmation" || task.state === "needs_onboarding" || task.state === "assigned_human"
+    task.state === "needs_type_confirmation" ||
+      task.state === "needs_onboarding" ||
+      task.state === "needs_dedup_confirmation" ||
+      task.state === "assigned_human"
       ? "needs"
       : task.state === "done" || task.state === "failed"
         ? "settled"
@@ -42,6 +49,8 @@ function TaskCard({
     .map((l) => l.trim())
     .filter(Boolean)
     .slice(-1)[0];
+  const dedupCandidate = task.dedupCandidateId ? allTasks.find((t) => t.id === task.dedupCandidateId) : undefined;
+  const dedupRationale = typeof task.context.dedupRationale === "string" ? task.context.dedupRationale : null;
 
   return (
     <article className="task-card">
@@ -115,6 +124,52 @@ function TaskCard({
                 Later
               </button>
             </div>
+          </div>
+        )}
+
+        {task.state === "needs_dedup_confirmation" && dedupCandidate && (
+          <div className="triage">
+            <div className="triage-why">
+              This looks like it might be the same as "{dedupCandidate.title}"
+              {dedupRationale ? ` — ${dedupRationale}` : ""}.
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                className="btn btn-primary"
+                disabled={busy}
+                onClick={async () => {
+                  setBusy(true);
+                  try {
+                    await onResolveDuplicate(true);
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                Yes, same task
+              </button>
+              <button
+                className="btn btn-secondary"
+                disabled={busy}
+                onClick={async () => {
+                  setBusy(true);
+                  try {
+                    await onResolveDuplicate(false);
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                No, keep separate
+              </button>
+            </div>
+            <button
+              className="btn btn-ghost"
+              style={{ fontSize: 11, padding: 0, alignSelf: "flex-start" }}
+              onClick={onOpen}
+            >
+              Read the whole task
+            </button>
           </div>
         )}
 
@@ -210,6 +265,7 @@ export function Board({
   onSelect,
   onOnboard,
   onConfirmType,
+  onResolveDuplicate,
   settledFrom,
   settledTo,
 }: {
@@ -218,6 +274,7 @@ export function Board({
   onSelect: (task: Task) => void;
   onOnboard: (task: Task) => void;
   onConfirmType: (taskId: string, typeId: string) => Promise<void>;
+  onResolveDuplicate: (taskId: string, isDuplicate: boolean) => Promise<void>;
   settledFrom: string;
   settledTo: string;
 }) {
@@ -246,9 +303,11 @@ export function Board({
                   key={task.id}
                   task={task}
                   types={types}
+                  allTasks={tasks}
                   onOpen={() => onSelect(task)}
                   onOnboard={() => onOnboard(task)}
                   onConfirmType={(typeId) => onConfirmType(task.id, typeId)}
+                  onResolveDuplicate={(isDuplicate) => onResolveDuplicate(task.id, isDuplicate)}
                 />
               ))}
             </div>
