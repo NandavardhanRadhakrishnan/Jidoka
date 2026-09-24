@@ -15,6 +15,7 @@ function TaskCard({
   types,
   allTasks,
   onOpen,
+  onOpenTask,
   onOnboard,
   onConfirmType,
   onResolveDuplicate,
@@ -23,6 +24,7 @@ function TaskCard({
   types: TypeWithRules[];
   allTasks: Task[];
   onOpen: () => void;
+  onOpenTask: (task: Task) => void;
   onOnboard: () => void;
   onConfirmType: (typeId: string) => Promise<void>;
   onResolveDuplicate: (isDuplicate: boolean) => Promise<void>;
@@ -163,13 +165,18 @@ function TaskCard({
                 No, keep separate
               </button>
             </div>
-            <button
-              className="btn btn-ghost"
-              style={{ fontSize: 11, padding: 0, alignSelf: "flex-start" }}
-              onClick={onOpen}
-            >
-              Read the whole task
-            </button>
+            <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+              <button
+                className="btn btn-ghost"
+                style={{ fontSize: 11, padding: 0 }}
+                onClick={() => onOpenTask(dedupCandidate)}
+              >
+                View original task →
+              </button>
+              <button className="btn btn-ghost" style={{ fontSize: 11, padding: 0 }} onClick={onOpen}>
+                Read the whole task
+              </button>
+            </div>
           </div>
         )}
 
@@ -326,6 +333,7 @@ export function Board({
                   types={types}
                   allTasks={tasks}
                   onOpen={() => onSelect(task)}
+                  onOpenTask={onSelect}
                   onOnboard={() => onOnboard(task)}
                   onConfirmType={(typeId) => onConfirmType(task.id, typeId)}
                   onResolveDuplicate={(isDuplicate) => onResolveDuplicate(task.id, isDuplicate)}
