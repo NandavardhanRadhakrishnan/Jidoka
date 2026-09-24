@@ -22,7 +22,6 @@ import {
 import { triageTask } from "./triage/triage";
 import { checkForDuplicate } from "./dedup/dedup";
 import { runRule, type ToolCaller } from "./rule/executor";
-import { ruleUsesTaskUrl } from "./rule/template";
 import type { AgentRunner } from "./agent/runner";
 import { buildRule } from "./rule/builder";
 
@@ -99,16 +98,6 @@ export async function runRuleForTask(
   if (!task.typeId) throw new Error(`runRuleForTask: task ${task.id} has no type`);
   const active = rule ?? getActiveRule(deps.db, task.typeId);
   if (!active) return updateTask(deps.db, task.id, { state: "needs_onboarding" });
-
-  if (!task.url && ruleUsesTaskUrl(active.definition)) {
-    return updateTask(deps.db, task.id, {
-      state: "failed",
-      context: {
-        ...task.context,
-        error: "this type's rule uses the task's URL ({{task.url}}), but this task has none",
-      },
-    });
-  }
 
   const running = updateTask(deps.db, task.id, { state: "processing" });
 

@@ -248,7 +248,7 @@ test("activating an onboarded rule processes the tasks that were waiting", async
   expect(processed?.context.summary).toBe("A summary");
 });
 
-test("a task with no URL fails fast against a rule that needs {{task.url}}, without calling the model", async () => {
+test("a task with no URL runs normally against a rule that needs {{task.url}}, rendering it empty", async () => {
   const db = freshDb();
   const type = insertTaskType(db, { name: "PR review", description: "d" });
   activateRule(
@@ -264,25 +264,40 @@ test("a task with no URL fails fast against a rule that needs {{task.url}}, with
     }).id,
   );
   const task = insertTask(db, { ...sample, url: null });
-  let calls = 0;
-  const app: AppDeps = {
-    db,
-    provider: {
-      id: "stub",
-      async complete() {
-        calls += 1;
-        return { text: "should not run", toolCalls: [] };
-      },
-    },
-    modelProvider: "anthropic",
-    mcp: { listTools: () => [], callTool: async () => "" },
-  };
+  const app = deps(db, ["Looks fine"]);
 
   const result = await confirmTaskType(app, task.id, type.id);
 
-  expect(result.state).toBe("failed");
-  expect(String(result.context.error)).toContain("task.url");
-  expect(calls).toBe(0);
+  expect(result.state).toBe("assigned_human");
+  expect(result.context.review).toBe("Looks fine");
+});
+
+test("a task with no URL drops the empty url-kind handoff target from an assign step's open array", async () => {
+  const db = freshDb();
+  const type = insertTaskType(db, { name: "PR review", description: "d" });
+  activateRule(
+    db,
+    insertRule(db, {
+      typeId: type.id,
+      definition: {
+        steps: [
+          {
+            id: "s1",
+            type: "assign",
+            to: "human",
+            open: [{ kind: "url", label: "Task", url: "{{task.url}}" }],
+          },
+        ],
+      },
+    }).id,
+  );
+  const task = insertTask(db, { ...sample, url: null });
+  const app = deps(db, []);
+
+  const result = await confirmTaskType(app, task.id, type.id);
+
+  expect(result.state).toBe("assigned_human");
+  expect(result.context.handoff).toEqual([]);
 });
 
 test("a task with a URL runs normally against a rule that needs {{task.url}}", async () => {
