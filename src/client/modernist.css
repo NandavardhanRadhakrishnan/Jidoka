@@ -196,7 +196,8 @@ textarea.input { min-height: 90px; resize: vertical; }
 .board-lane-head { display: flex; align-items: baseline; gap: 8px; padding: 16px 0 8px; border-bottom: 2px solid; position: sticky; top: 0; background: var(--color-bg); z-index: 1; }
 .board-lane-head .name { font-family: var(--font-heading); font-weight: 800; font-size: 13px; letter-spacing: 0.06em; text-transform: uppercase; }
 .board-lane-head .sub { margin-left: auto; font-size: 11px; color: var(--color-neutral-600); }
-.date-range-filter { display: flex; align-items: center; gap: 5px; margin-left: auto; }
+.header-search { width: 220px; min-height: 32px; margin-left: auto; }
+.date-range-filter { display: flex; align-items: center; gap: 5px; }
 .date-trigger {
   position: relative;
   display: inline-flex;

@@ -43,6 +43,7 @@ export function App() {
   const [modal, setModal] = useState<"newtask" | "signin" | null>(null);
   const [settledFrom, setSettledFrom] = useState("");
   const [settledTo, setSettledTo] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
 
   const refresh = useCallback(async () => {
     const [nextTasks, nextTypes] = await Promise.all([api.tasks(), api.types()]);
@@ -166,6 +167,16 @@ export function App() {
             </span>
           )}
           {screen === "board" && (
+            <input
+              className="input header-search"
+              type="text"
+              placeholder="Search tasks…"
+              aria-label="Search tasks"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          )}
+          {screen === "board" && (
             <SettledDateFilter
               from={settledFrom}
               to={settledTo}
@@ -197,6 +208,7 @@ export function App() {
               onResolveDuplicate={resolveDuplicate}
               settledFrom={settledFrom}
               settledTo={settledTo}
+              searchQuery={searchQuery}
             />
           ) : screen === "types" ? (
             <Rules />

@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { Task } from "../domain/task";
 import type { TypeWithRules } from "./api";
 import { LANES, filterByDateRange, groupByLane, STATE_LABEL, taskAge, daysUntil, deadlineUrgency } from "./columns";
+import { matchesQuery } from "./search";
 import { Icon, sourceIcon } from "./icons";
 
 function laneTone(lane: "needs" | "running" | "settled", failed: boolean): string {
@@ -296,6 +297,7 @@ export function Board({
   onResolveDuplicate,
   settledFrom,
   settledTo,
+  searchQuery,
 }: {
   tasks: Task[];
   types: TypeWithRules[];
@@ -305,14 +307,16 @@ export function Board({
   onResolveDuplicate: (taskId: string, isDuplicate: boolean) => Promise<void>;
   settledFrom: string;
   settledTo: string;
+  searchQuery: string;
 }) {
   const grouped = groupByLane(tasks);
 
   return (
     <div className="board-lanes">
       {LANES.map((lane) => {
-        const laneTasks =
+        const dateFiltered =
           lane.key === "settled" ? filterByDateRange(grouped[lane.key], settledFrom, settledTo) : grouped[lane.key];
+        const laneTasks = dateFiltered.filter((t) => matchesQuery(t, searchQuery));
         const tone = laneTone(lane.key, false);
         return (
           <section key={lane.key} className="board-lane">
