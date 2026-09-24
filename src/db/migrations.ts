@@ -70,4 +70,5 @@ export const MIGRATIONS: string[] = [
      data TEXT NOT NULL
    )`,
   `ALTER TABLE tasks ADD COLUMN deadline TEXT`,
+  `ALTER TABLE tasks ADD COLUMN dedup_candidate_id TEXT`,
 ];

@@ -2,6 +2,7 @@ export type TaskState =
   | "ingested"
   | "needs_type_confirmation"
   | "needs_onboarding"
+  | "needs_dedup_confirmation"
   | "processing"
   | "assigned_ai"
   | "assigned_human"
@@ -24,6 +25,8 @@ export interface Task {
   assignee: Assignee | null;
   /** yyyy-mm-dd, extracted from the source content by triage; null when none was mentioned. */
   deadline: string | null;
+  /** Set while state is needs_dedup_confirmation: the task this might duplicate. */
+  dedupCandidateId: string | null;
   context: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
@@ -44,5 +47,6 @@ export interface TaskPatch {
   typeCandidates?: string[] | null;
   assignee?: Assignee | null;
   deadline?: string | null;
+  dedupCandidateId?: string | null;
   context?: Record<string, unknown>;
 }

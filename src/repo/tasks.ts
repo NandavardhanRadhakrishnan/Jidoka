@@ -14,6 +14,7 @@ interface Row {
   state: string;
   assignee: string | null;
   deadline: string | null;
+  dedup_candidate_id: string | null;
   context: string;
   created_at: string;
   updated_at: string;
@@ -35,6 +36,7 @@ function toTask(row: Row): Task {
     state: row.state as Task["state"],
     assignee: row.assignee as Task["assignee"],
     deadline: row.deadline,
+    dedupCandidateId: row.dedup_candidate_id,
     context: JSON.parse(row.context) as Record<string, unknown>,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -93,16 +95,21 @@ export function updateTask(db: Database, id: string, patch: TaskPatch): Task {
   const next = { ...current, ...patch, updatedAt: new Date().toISOString() };
   db.query(
     `UPDATE tasks SET state = ?, type_id = ?, type_candidates = ?, assignee = ?,
-                      deadline = ?, context = ?, updated_at = ? WHERE id = ?`,
+                      deadline = ?, dedup_candidate_id = ?, context = ?, updated_at = ? WHERE id = ?`,
   ).run(
     next.state,
     next.typeId,
     next.typeCandidates ? JSON.stringify(next.typeCandidates) : null,
     next.assignee,
     next.deadline,
+    next.dedupCandidateId,
     JSON.stringify(next.context),
     next.updatedAt,
     id,
   );
   return next;
+}
+
+export function deleteTask(db: Database, id: string): void {
+  db.query("DELETE FROM tasks WHERE id = ?").run(id);
 }

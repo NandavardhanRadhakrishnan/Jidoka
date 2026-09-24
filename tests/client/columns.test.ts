@@ -16,6 +16,7 @@ function task(id: string, state: TaskState, createdAt = "2026-01-01T00:00:00.000
     state,
     assignee: null,
     deadline: null,
+    dedupCandidateId: null,
     context: {},
     createdAt,
     updatedAt: createdAt,

@@ -6,6 +6,7 @@ import {
   listTasks,
   findTaskBySource,
   updateTask,
+  deleteTask,
 } from "../../src/repo/tasks";
 
 function freshDb() {
@@ -44,6 +45,37 @@ test("updateTask patches a deadline", () => {
 
   expect(updated.deadline).toBe("2026-02-01");
   expect(getTask(db, task.id)?.deadline).toBe("2026-02-01");
+});
+
+test("updateTask patches a dedup candidate id", () => {
+  const db = freshDb();
+  const task = insertTask(db, sample);
+  const other = insertTask(db, { ...sample, externalId: "msg-2" });
+
+  const updated = updateTask(db, task.id, {
+    state: "needs_dedup_confirmation",
+    dedupCandidateId: other.id,
+  });
+
+  expect(updated.state).toBe("needs_dedup_confirmation");
+  expect(updated.dedupCandidateId).toBe(other.id);
+  expect(getTask(db, task.id)?.dedupCandidateId).toBe(other.id);
+});
+
+test("insertTask defaults dedupCandidateId to null", () => {
+  const db = freshDb();
+  const task = insertTask(db, sample);
+  expect(task.dedupCandidateId).toBeNull();
+});
+
+test("deleteTask removes the row", () => {
+  const db = freshDb();
+  const task = insertTask(db, sample);
+
+  deleteTask(db, task.id);
+
+  expect(getTask(db, task.id)).toBeNull();
+  expect(listTasks(db)).toHaveLength(0);
 });
 
 test("findTaskBySource finds by source and external id", () => {

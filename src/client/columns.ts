@@ -5,6 +5,7 @@ export type LaneKey = "needs" | "running" | "settled";
 export const LANE_OF: Record<TaskState, LaneKey> = {
   needs_type_confirmation: "needs",
   needs_onboarding: "needs",
+  needs_dedup_confirmation: "needs",
   assigned_human: "needs",
   ingested: "running",
   processing: "running",
@@ -29,6 +30,7 @@ export const STATE_LABEL: Record<TaskState, string> = {
   ingested: "ingested",
   needs_type_confirmation: "needs type confirmation",
   needs_onboarding: "needs onboarding",
+  needs_dedup_confirmation: "possible duplicate",
   processing: "processing",
   assigned_ai: "assigned to AI",
   assigned_human: "assigned to human",
