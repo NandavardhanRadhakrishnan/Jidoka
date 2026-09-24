@@ -386,6 +386,24 @@ test("POST /api/tasks/:id/dedup on a task with no pending candidate is rejected"
   expect(response.status).toBe(400);
 });
 
+test("POST /api/tasks/:id/dedup with isDuplicate false succeeds even with no pending candidate, so a dangling reference is never a dead end", async () => {
+  const { deps, fetch } = app([
+    JSON.stringify({ scores: [], proposal: { name: "Solo type", description: "d", rationale: "r" } }),
+  ]);
+  const task = insertTask(deps.db, { sourceId: "outlook", externalId: "t0", title: "Solo", body: "b" });
+  updateTask(deps.db, task.id, { state: "needs_dedup_confirmation", dedupCandidateId: null });
+
+  const response = await fetch(
+    new Request(`http://localhost/api/tasks/${task.id}/dedup`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ isDuplicate: false }),
+    }),
+  );
+
+  expect(response.status).toBe(200);
+});
+
 test("POST /api/tasks/:id/dedup on an unknown task 404s", async () => {
   const { fetch } = app([]);
   const response = await fetch(

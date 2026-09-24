@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type { Task } from "../domain/task";
 import { findTaskBySource, insertTask } from "../repo/tasks";
+import { wasMerged } from "../repo/mergedSourceItems";
 import { getCursor, setCursor } from "../repo/sourceState";
 import type { TaskSource } from "./types";
 
@@ -17,6 +18,7 @@ export async function pollOnce(
   const created: Task[] = [];
   for (const item of result.items) {
     if (findTaskBySource(db, source.id, item.externalId)) continue;
+    if (wasMerged(db, source.id, item.externalId)) continue;
     created.push(
       insertTask(db, {
         sourceId: source.id,

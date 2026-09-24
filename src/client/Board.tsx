@@ -173,6 +173,27 @@ function TaskCard({
           </div>
         )}
 
+        {task.state === "needs_dedup_confirmation" && !dedupCandidate && (
+          <div className="triage">
+            <div className="triage-why">The task this was matched against no longer exists.</div>
+            <button
+              className="btn btn-secondary"
+              style={{ alignSelf: "flex-start" }}
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true);
+                try {
+                  await onResolveDuplicate(false);
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              Keep it
+            </button>
+          </div>
+        )}
+
         {task.state === "needs_onboarding" && (
           <button className="btn btn-primary" style={{ alignSelf: "flex-start", padding: "5px 10px", fontSize: 12 }} onClick={onOnboard}>
             Onboard this type

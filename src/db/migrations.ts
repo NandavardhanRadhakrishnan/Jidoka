@@ -71,4 +71,10 @@ export const MIGRATIONS: string[] = [
    )`,
   `ALTER TABLE tasks ADD COLUMN deadline TEXT`,
   `ALTER TABLE tasks ADD COLUMN dedup_candidate_id TEXT`,
+  `CREATE TABLE IF NOT EXISTS merged_source_items (
+     source_id TEXT NOT NULL,
+     external_id TEXT NOT NULL,
+     merged_at TEXT NOT NULL,
+     PRIMARY KEY (source_id, external_id)
+   )`,
 ];

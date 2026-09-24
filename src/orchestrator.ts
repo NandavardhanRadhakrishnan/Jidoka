@@ -5,6 +5,7 @@ import { modelCatalog } from "./ai/models";
 import type { Task } from "./domain/task";
 import type { Rule } from "./domain/rule";
 import { getTask, listTasks, updateTask, deleteTask } from "./repo/tasks";
+import { recordMergedSourceItem } from "./repo/mergedSourceItems";
 import {
   getTaskType,
   insertTaskType,
@@ -264,8 +265,13 @@ export function mergeTasks(deps: AppDeps, duplicateTaskId: string, intoTaskId: s
   const target = getTask(deps.db, intoTaskId);
   if (!duplicate) throw new Error(`mergeTasks: unknown task ${duplicateTaskId}`);
   if (!target) throw new Error(`mergeTasks: unknown task ${intoTaskId}`);
-  if (duplicate.state === "processing") {
-    throw new Error("mergeTasks: cannot merge a task that is currently processing");
+  if (duplicate.state === "processing" || target.state === "processing") {
+    // The target side matters too: runRuleForTask snapshots `context` when a
+    // rule starts and overwrites the whole column with its own result when
+    // it finishes, so a mergedFrom record written mid-run would be silently
+    // clobbered right after the duplicate's row is already gone — losing the
+    // only trace that the duplicate ever existed.
+    throw new Error("mergeTasks: cannot merge while either task is currently processing");
   }
 
   const record: MergedFromRecord = {
@@ -279,19 +285,30 @@ export function mergeTasks(deps: AppDeps, duplicateTaskId: string, intoTaskId: s
   const updated = updateTask(deps.db, target.id, {
     context: { ...target.context, mergedFrom: [...asMergedFromArray(target.context.mergedFrom), record] },
   });
+  // Tombstone the source item, not just the task row: a re-listing source
+  // (one that returns the same items every poll regardless of cursor, like
+  // the bundled sample folder source) would otherwise rediscover it on the
+  // next tick and re-ingest it as a brand-new task, undoing the merge.
+  recordMergedSourceItem(deps.db, duplicate.sourceId, duplicate.externalId);
   deleteTask(deps.db, duplicate.id);
   return updated;
 }
 
-/** A human resolving an AI-detected `needs_dedup_confirmation` pause. */
+/** A human resolving an AI-detected `needs_dedup_confirmation` pause.
+ *  Dismissal (isDuplicate: false) never requires a live candidate — the
+ *  candidate task may since have been deleted (merged away itself, or
+ *  removed by hand), and a human must always be able to say "keep this
+ *  one" regardless, or the task is stuck with no way forward. */
 export async function resolveDuplicate(deps: AppDeps, taskId: string, isDuplicate: boolean): Promise<Task> {
   const task = getTask(deps.db, taskId);
   if (!task) throw new Error(`resolveDuplicate: unknown task ${taskId}`);
-  if (!task.dedupCandidateId) {
-    throw new Error(`resolveDuplicate: task ${taskId} has no pending duplicate candidate`);
-  }
 
-  if (isDuplicate) return mergeTasks(deps, task.id, task.dedupCandidateId);
+  if (isDuplicate) {
+    if (!task.dedupCandidateId) {
+      throw new Error(`resolveDuplicate: task ${taskId} has no pending duplicate candidate`);
+    }
+    return mergeTasks(deps, task.id, task.dedupCandidateId);
+  }
 
   const cleared = updateTask(deps.db, task.id, { dedupCandidateId: null });
   return triageAndAssign(deps, cleared);

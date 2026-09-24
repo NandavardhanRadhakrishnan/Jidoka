@@ -3,6 +3,7 @@ import { openDb, migrate } from "../src/db";
 import { insertTask, getTask, deleteTask, updateTask } from "../src/repo/tasks";
 import { insertTaskType, getTaskType, listTaskTypes } from "../src/repo/taskTypes";
 import { insertRule, activateRule, getActiveRule } from "../src/repo/rules";
+import { wasMerged } from "../src/repo/mergedSourceItems";
 import {
   onTaskIngested,
   confirmTaskType,
@@ -430,4 +431,98 @@ test("resolveDuplicate surfaces a clear error rather than crashing when the cand
   const app = deps(db, []);
 
   await expect(resolveDuplicate(app, task.id, true)).rejects.toThrow(/unknown task/);
+});
+
+test("mergeTasks tombstones the duplicate's source item so a re-listing poller never resurrects it", async () => {
+  const db = freshDb();
+  const target = insertTask(db, { ...sample, externalId: "m0" });
+  const dup = insertTask(db, { ...sample, externalId: "m1" });
+  const app = deps(db, []);
+
+  mergeTasks(app, dup.id, target.id);
+
+  expect(wasMerged(db, dup.sourceId, dup.externalId)).toBe(true);
+});
+
+test("mergeTasks refuses to merge into a target that is currently processing, to avoid losing the merge record", () => {
+  const db = freshDb();
+  const targetRaw = insertTask(db, { ...sample, externalId: "m0" });
+  const target = updateTask(db, targetRaw.id, { state: "processing" });
+  const dup = insertTask(db, { ...sample, externalId: "m1" });
+  const app = deps(db, []);
+
+  expect(() => mergeTasks(app, dup.id, target.id)).toThrow(/processing/);
+});
+
+test("resolveDuplicate(false) proceeds through triage even when the candidate was already cleared, so a dangling reference is never a dead end", async () => {
+  const db = freshDb();
+  const type = insertTaskType(db, { name: "Customer email", description: "d" });
+  const taskRaw = insertTask(db, { ...sample, externalId: "m1" });
+  const task = updateTask(db, taskRaw.id, { state: "needs_dedup_confirmation", dedupCandidateId: null });
+  const app = deps(db, [JSON.stringify({ scores: [{ typeId: type.id, confidence: 0.95 }], proposal: null })]);
+
+  const result = await resolveDuplicate(app, task.id, false);
+
+  expect(result.typeId).toBe(type.id);
+});
+
+test("a task pending its own dedup confirmation is not offered as a dedup candidate to a newer task", async () => {
+  const db = freshDb();
+  const other = insertTask(db, { ...sample, externalId: "m0" });
+  const pendingRaw = insertTask(db, { ...sample, externalId: "m-pending" });
+  updateTask(db, pendingRaw.id, { state: "needs_dedup_confirmation", dedupCandidateId: other.id });
+  const task = insertTask(db, { ...sample, externalId: "m1" });
+
+  let capturedMessage = "";
+  const app: AppDeps = {
+    db,
+    provider: {
+      id: "stub",
+      async complete(req) {
+        const first = req.messages[0]; capturedMessage = first && "content" in first ? first.content : "";
+        return {
+          text: JSON.stringify({ duplicateOfTaskId: other.id, confidence: 0.9, rationale: "match" }),
+          toolCalls: [],
+        };
+      },
+    },
+    modelProvider: "anthropic",
+    mcp: { listTools: () => [], callTool: async () => "" },
+  };
+
+  await onTaskIngested(app, task);
+
+  expect(capturedMessage).not.toContain(pendingRaw.id);
+  expect(capturedMessage).toContain(other.id);
+});
+
+test("dedup candidates are capped at the 30 most recently created tasks", async () => {
+  const db = freshDb();
+  for (let i = 0; i < 35; i++) {
+    insertTask(db, { ...sample, externalId: `old-${i}` });
+  }
+  const task = insertTask(db, { ...sample, externalId: "new" });
+
+  let capturedMessage = "";
+  const app: AppDeps = {
+    db,
+    provider: {
+      id: "stub",
+      async complete(req) {
+        const first = req.messages[0]; capturedMessage = first && "content" in first ? first.content : "";
+        const firstId = capturedMessage.match(/- id: (\S+)/)?.[1] ?? "";
+        return {
+          text: JSON.stringify({ duplicateOfTaskId: firstId, confidence: 0.9, rationale: "match" }),
+          toolCalls: [],
+        };
+      },
+    },
+    modelProvider: "anthropic",
+    mcp: { listTools: () => [], callTool: async () => "" },
+  };
+
+  await onTaskIngested(app, task);
+
+  const idCount = (capturedMessage.match(/- id:/g) ?? []).length;
+  expect(idCount).toBe(30);
 });

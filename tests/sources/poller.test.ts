@@ -2,6 +2,8 @@ import { test, expect } from "bun:test";
 import { openDb, migrate } from "../../src/db";
 import { pollOnce, startPoller } from "../../src/sources/poller";
 import { getCursor } from "../../src/repo/sourceState";
+import { findTaskBySource, deleteTask } from "../../src/repo/tasks";
+import { recordMergedSourceItem } from "../../src/repo/mergedSourceItems";
 import type { TaskSource, RawItem } from "../../src/sources/types";
 import type { Task } from "../../src/domain/task";
 
@@ -68,6 +70,23 @@ test("pollOnce skips items already ingested and resumes from the stored cursor",
   expect(second[0]?.externalId).toBe("m2");
   expect(source.seen).toEqual([null, "c1"]);
   expect(getCursor(db, "fake")).toBe("c2");
+});
+
+test("pollOnce does not re-create a task whose source item was merged away as a duplicate", async () => {
+  const db = freshDb();
+  const source = fakeSource([
+    { items: [{ externalId: "m1", title: "One", body: "first" }], cursor: "c1" },
+    { items: [{ externalId: "m1", title: "One", body: "first" }], cursor: "c1" },
+  ]);
+
+  await pollOnce(db, source, async () => {});
+  const task = findTaskBySource(db, "fake", "m1")!;
+  deleteTask(db, task.id);
+  recordMergedSourceItem(db, "fake", "m1");
+
+  const second = await pollOnce(db, source, async () => {});
+
+  expect(second).toHaveLength(0);
 });
 
 test("pollOnce keeps the old cursor when the source throws", async () => {

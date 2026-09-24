@@ -135,7 +135,9 @@ export function createServer(deps: AppDeps, extraRoutes?: Hono): Hono {
     if (!task) return c.json({ error: "unknown task" }, 404);
     const input = await readJson<{ isDuplicate?: boolean }>(c);
     if (typeof input?.isDuplicate !== "boolean") return c.json({ error: "isDuplicate is required" }, 400);
-    if (!task.dedupCandidateId) return c.json({ error: "this task has no pending duplicate candidate" }, 400);
+    if (input.isDuplicate && !task.dedupCandidateId) {
+      return c.json({ error: "this task has no pending duplicate candidate" }, 400);
+    }
 
     try {
       const result = await resolveDuplicate(deps, id, input.isDuplicate);
