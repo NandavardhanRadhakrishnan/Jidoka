@@ -1,5 +1,6 @@
 import { test, expect } from "bun:test";
 import { buildRule } from "../../src/rule/builder";
+import { RuleDefinitionSchema } from "../../src/domain/rule";
 import type { AiProvider } from "../../src/ai/provider";
 import type { TaskType } from "../../src/domain/taskType";
 import { modelCatalog } from "../../src/ai/models";
@@ -121,4 +122,48 @@ test("buildRule retries when the response sets an unknown model id", async () =>
 
   expect(definition.steps).toHaveLength(2);
   expect(provider.prompts[1]).toContain("gpt-nonexistent");
+});
+
+test("buildRule includes previous rule and hints when previousRule is supplied", async () => {
+  const previousDefinition = RuleDefinitionSchema.parse({
+    steps: [
+      { id: "s1", type: "ai", prompt: "Old prompt", output: "summary" },
+      { id: "s2", type: "assign", to: "human" },
+    ],
+  });
+  const provider = scripted([valid]);
+
+  await buildRule(provider, {
+    type,
+    description: "Refresh handling",
+    tools: [],
+    models: [],
+    previousRule: {
+      definition: previousDefinition,
+      hints: [
+        { id: "h1", ruleId: "r1", stepId: "s1", text: "Use title case", excerpt: null, createdAt: "t" },
+      ],
+    },
+  });
+
+  expect(provider.prompts[0]).toContain("Previous active rule");
+  expect(provider.prompts[0]).toContain("Old prompt");
+  expect(provider.prompts[0]).toContain("step s1 (output: summary): Use title case");
+});
+
+test("buildRule without previousRule sends the same message as before this feature", async () => {
+  const input = {
+    type,
+    description: "Summarize the email then give it to a human",
+    tools: [
+      { name: "outlook__get_thread", description: "Fetch a thread", inputSchema: { type: "object" } },
+    ] as const,
+    models: [] as const,
+  };
+  const first = scripted([valid]);
+  await buildRule(first, { ...input, tools: [...input.tools], models: [...input.models] });
+  const second = scripted([valid]);
+  await buildRule(second, { ...input, tools: [...input.tools], models: [...input.models] });
+
+  expect(second.prompts[0]).toBe(first.prompts[0]);
 });

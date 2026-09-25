@@ -13,8 +13,12 @@ import {
   mergeTasks,
   resolveDuplicate,
   markDuplicate,
+  runRuleForTask,
+  rerunStep,
+  getDependents,
   type AppDeps,
 } from "../src/orchestrator";
+import { insertHint } from "../src/repo/hints";
 import type { AiProvider } from "../src/ai/provider";
 
 function freshDb() {
@@ -540,4 +544,124 @@ test("dedup candidates are capped at the 30 most recently created tasks", async 
 
   const idCount = (capturedMessage.match(/- id:/g) ?? []).length;
   expect(idCount).toBe(30);
+});
+
+test("runRuleForTask injects saved hints into the ai step prompt", async () => {
+  const db = freshDb();
+  const type = insertTaskType(db, { name: "Customer email", description: "d" });
+  const rule = activateRule(
+    db,
+    insertRule(db, {
+      typeId: type.id,
+      definition: {
+        steps: [
+          { id: "s1", type: "ai", prompt: "Summarize {{task.body}}", output: "summary" },
+          { id: "s2", type: "assign", to: "human" },
+        ],
+      },
+    }).id,
+  );
+  insertHint(db, { ruleId: rule.id, stepId: "s1", text: "Always use formal tone" });
+  const task = updateTask(db, insertTask(db, sample).id, { typeId: type.id, state: "processing" });
+
+  let captured = "";
+  const app: AppDeps = {
+    ...deps(db, ["done"]),
+    provider: {
+      id: "stub",
+      async complete(req) {
+        const first = req.messages[0];
+        captured = first && "content" in first ? first.content : "";
+        return { text: "done", toolCalls: [] };
+      },
+    },
+  };
+
+  await runRuleForTask(app, getTask(db, task.id)!, rule);
+
+  expect(captured).toContain("Notes from past corrections on this step");
+  expect(captured).toContain("Always use formal tone");
+});
+
+test("rerunStep updates only the target context key and appends ruleLog", async () => {
+  const db = freshDb();
+  const type = insertTaskType(db, { name: "Customer email", description: "d" });
+  activateRule(
+    db,
+    insertRule(db, {
+      typeId: type.id,
+      definition: {
+        steps: [
+          { id: "s1", type: "ai", prompt: "A", output: "a" },
+          { id: "s2", type: "ai", prompt: "B", output: "b" },
+          { id: "s3", type: "assign", to: "human" },
+        ],
+      },
+    }).id,
+  );
+  const task = updateTask(db, insertTask(db, sample).id, {
+    typeId: type.id,
+    state: "assigned_human",
+    assignee: "human",
+    context: {
+      a: "old-a",
+      b: "keep-b",
+      ruleLog: [
+        { stepId: "s1", type: "ai", output: "a" },
+        { stepId: "s2", type: "ai", output: "b" },
+        { stepId: "s3", type: "assign" },
+      ],
+    },
+  });
+  const app = deps(db, ["new-a"]);
+
+  const updated = await rerunStep(app, task.id, "s1");
+
+  expect(updated.state).toBe("assigned_human");
+  expect(updated.assignee).toBe("human");
+  expect(updated.context.a).toBe("new-a");
+  expect(updated.context.b).toBe("keep-b");
+  const log = updated.context.ruleLog as { stepId: string }[];
+  expect(log).toHaveLength(4);
+  expect(log[3]).toMatchObject({ stepId: "s1", type: "ai", output: "a" });
+});
+
+test("getDependents respects ranStepIds from ruleLog", () => {
+  const db = freshDb();
+  const type = insertTaskType(db, { name: "Customer email", description: "d" });
+  activateRule(
+    db,
+    insertRule(db, {
+      typeId: type.id,
+      definition: {
+        steps: [
+          { id: "a", type: "ai", prompt: "extract", output: "fields" },
+          { id: "b", type: "ai", prompt: "Build from {{context.fields}}", output: "query" },
+          { id: "c", type: "assign", to: "human" },
+        ],
+      },
+    }).id,
+  );
+  const taskId = updateTask(db, insertTask(db, sample).id, {
+    typeId: type.id,
+    context: {
+      fields: "x",
+      ruleLog: [{ stepId: "a", type: "ai", output: "fields" }],
+    },
+  }).id;
+  const app = deps(db, []);
+
+  expect(getDependents(app, taskId, "a")).toEqual({ safe: [], unsafe: [] });
+
+  updateTask(db, taskId, {
+    context: {
+      fields: "x",
+      ruleLog: [
+        { stepId: "a", type: "ai", output: "fields" },
+        { stepId: "b", type: "ai", output: "query" },
+      ],
+    },
+  });
+
+  expect(getDependents(app, taskId, "a")).toEqual({ safe: ["b"], unsafe: [] });
 });

@@ -5,6 +5,7 @@ import {
   type RuleDefinition,
   type RuleStep,
 } from "../domain/rule";
+import type { Hint } from "../domain/hint";
 import type { TaskType } from "../domain/taskType";
 import { TOOL_SEPARATOR } from "../mcp/names";
 
@@ -43,6 +44,7 @@ export interface BuildInput {
   description: string;
   tools: ToolSpec[];
   models: ModelOption[];
+  previousRule?: { definition: RuleDefinition; hints: Hint[] };
 }
 
 function toolCatalog(tools: ToolSpec[]): string {
@@ -61,8 +63,35 @@ function modelCatalogText(models: ModelOption[]): string {
   return models.map((m) => `- ${m.id} — ${m.blurb}`).join("\n");
 }
 
+function hintStepLabel(definition: RuleDefinition, stepId: string): string {
+  const step = collectSteps(definition.steps).find((s) => s.id === stepId);
+  if (step && (step.type === "ai" || step.type === "agent" || step.type === "mcp_tool")) {
+    return `${stepId} (output: ${step.output})`;
+  }
+  return stepId;
+}
+
+function previousRuleSection(input: BuildInput): string {
+  const { definition, hints } = input.previousRule!;
+  const hintLines = hints
+    .map((h) => {
+      const label = hintStepLabel(definition, h.stepId);
+      const excerpt = h.excerpt ? ` (excerpt: ${h.excerpt})` : "";
+      return `- step ${label}: ${h.text}${excerpt}`;
+    })
+    .join("\n");
+
+  return `
+
+Previous active rule (preserve every step except what the description above says needs to change):
+${JSON.stringify(definition, null, 2)}
+
+Corrections learned from reviewing past outputs of specific steps (fold whichever are still relevant into the new prompts you write for the corresponding steps):
+${hintLines || "(none)"}`;
+}
+
 function userMessage(input: BuildInput): string {
-  return `Task type: ${input.type.name}
+  const base = `Task type: ${input.type.name}
 Type description: ${input.type.description}
 
 How the user wants these tasks handled:
@@ -73,6 +102,9 @@ ${toolCatalog(input.tools)}
 
 Available models (set "model" on every "ai" and "agent" step to the best-fit id below; omit only if truly indifferent):
 ${modelCatalogText(input.models)}`;
+
+  if (!input.previousRule) return base;
+  return base + previousRuleSection(input);
 }
 
 function collectSteps(steps: RuleStep[]): RuleStep[] {

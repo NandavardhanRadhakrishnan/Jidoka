@@ -21,9 +21,11 @@ import {
 } from "./repo/rules";
 import { triageTask } from "./triage/triage";
 import { checkForDuplicate } from "./dedup/dedup";
-import { runRule, type ToolCaller } from "./rule/executor";
+import { runRule, rerunStep as rerunRuleStep, type StepLogEntry, type ToolCaller } from "./rule/executor";
+import { findDependentSteps } from "./rule/dependents";
 import type { AgentRunner } from "./agent/runner";
 import { buildRule } from "./rule/builder";
+import { listHintsForRule, listHintsForStep } from "./repo/hints";
 
 export interface AppDeps {
   db: Database;
@@ -32,6 +34,26 @@ export interface AppDeps {
   mcp: { listTools(): ToolSpec[]; callTool: ToolCaller };
   /** Backend for `agent` steps; the executor's in-process loop when unset. */
   runAgent?: AgentRunner;
+}
+
+function executorDepsForRule(deps: AppDeps, active: Rule) {
+  return {
+    provider: deps.provider,
+    callTool: deps.mcp.callTool,
+    listTools: () => deps.mcp.listTools(),
+    ...(deps.runAgent ? { runAgent: deps.runAgent } : {}),
+    loadRule: (typeId: string, version: number) => {
+      const found = listRules(deps.db, typeId).find((p) => p.version === version);
+      return found ? { id: found.id, definition: found.definition } : null;
+    },
+    self: { typeId: active.typeId, version: active.version, ruleId: active.id },
+    getHints: (ruleId: string, stepId: string) =>
+      listHintsForStep(deps.db, ruleId, stepId).map((h) => h.text),
+  };
+}
+
+function ruleLogFromContext(context: Record<string, unknown>): StepLogEntry[] {
+  return (context.ruleLog as StepLogEntry[] | undefined) ?? [];
 }
 
 export async function onTaskIngested(deps: AppDeps, task: Task): Promise<Task> {
@@ -102,19 +124,7 @@ export async function runRuleForTask(
   const running = updateTask(deps.db, task.id, { state: "processing" });
 
   try {
-    const result = await runRule(
-      {
-        provider: deps.provider,
-        callTool: deps.mcp.callTool,
-        listTools: () => deps.mcp.listTools(),
-        ...(deps.runAgent ? { runAgent: deps.runAgent } : {}),
-        loadRule: (typeId, version) =>
-          listRules(deps.db, typeId).find((p) => p.version === version)?.definition ?? null,
-        self: { typeId: active.typeId, version: active.version },
-      },
-      active.definition,
-      running,
-    );
+    const result = await runRule(executorDepsForRule(deps, active), active.definition, running);
 
     return updateTask(deps.db, task.id, {
       context: {
@@ -132,6 +142,44 @@ export async function runRuleForTask(
       context: { ...running.context, error: message },
     });
   }
+}
+
+export async function rerunStep(deps: AppDeps, taskId: string, stepId: string): Promise<Task> {
+  const task = getTask(deps.db, taskId);
+  if (!task) throw new Error(`rerunStep: unknown task ${taskId}`);
+  if (!task.typeId) throw new Error(`rerunStep: task ${taskId} has no type`);
+  const active = getActiveRule(deps.db, task.typeId);
+  if (!active) throw new Error(`rerunStep: no active rule for type ${task.typeId}`);
+
+  const result = await rerunRuleStep(
+    executorDepsForRule(deps, active),
+    active.definition,
+    task,
+    stepId,
+  );
+
+  return updateTask(deps.db, taskId, {
+    context: {
+      ...task.context,
+      ...result.context,
+      ruleLog: [...ruleLogFromContext(task.context), result.log],
+    },
+  });
+}
+
+export function getDependents(
+  deps: AppDeps,
+  taskId: string,
+  stepId: string,
+): { safe: string[]; unsafe: string[] } {
+  const task = getTask(deps.db, taskId);
+  if (!task) throw new Error(`getDependents: unknown task ${taskId}`);
+  if (!task.typeId) throw new Error(`getDependents: task ${taskId} has no type`);
+  const active = getActiveRule(deps.db, task.typeId);
+  if (!active) throw new Error(`getDependents: no active rule for type ${task.typeId}`);
+
+  const ranStepIds = new Set(ruleLogFromContext(task.context).map((entry) => entry.stepId));
+  return findDependentSteps(active.definition, ranStepIds, stepId);
 }
 
 export async function confirmTaskType(
@@ -157,12 +205,18 @@ export async function onboardType(
   const type = getTaskType(deps.db, typeId);
   if (!type) throw new Error(`onboardType: unknown type ${typeId}`);
 
-  const definition = await buildRule(deps.provider, {
+  const active = getActiveRule(deps.db, typeId);
+  const buildInput = {
     type,
     description,
     tools: deps.mcp.listTools(),
     models: modelCatalog(deps.modelProvider),
-  });
+    ...(active
+      ? { previousRule: { definition: active.definition, hints: listHintsForRule(deps.db, active.id) } }
+      : {}),
+  };
+
+  const definition = await buildRule(deps.provider, buildInput);
   return insertRule(deps.db, { typeId, definition });
 }
 
