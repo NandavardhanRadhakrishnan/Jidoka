@@ -77,4 +77,12 @@ export const MIGRATIONS: string[] = [
      merged_at TEXT NOT NULL,
      PRIMARY KEY (source_id, external_id)
    )`,
+  `CREATE TABLE IF NOT EXISTS hints (
+     id TEXT PRIMARY KEY,
+     rule_id TEXT NOT NULL,
+     step_id TEXT NOT NULL,
+     text TEXT NOT NULL,
+     excerpt TEXT,
+     created_at TEXT NOT NULL
+   )`,
 ];
