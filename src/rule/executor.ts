@@ -10,7 +10,10 @@ export type ToolCaller = (
   input: Record<string, unknown>,
 ) => Promise<string>;
 
-export type RuleLoader = (typeId: string, version: number) => RuleDefinition | null;
+export type RuleLoader = (
+  typeId: string,
+  version: number,
+) => { id: string; definition: RuleDefinition } | null;
 
 export interface ExecutorDeps {
   provider: AiProvider;
@@ -24,7 +27,8 @@ export interface ExecutorDeps {
    */
   runAgent?: AgentRunner;
   /** The rule being run, so that a self-call is detected as a loop. */
-  self?: { typeId: string; version: number };
+  self?: { typeId: string; version: number; ruleId: string };
+  getHints?: (ruleId: string, stepId: string) => string[];
 }
 
 export interface StepLogEntry {
@@ -112,63 +116,158 @@ function scopeFor(task: Task, state: RunState): TemplateScope {
   };
 }
 
+function renderStepPrompt(
+  deps: ExecutorDeps,
+  step: Extract<RuleStep, { type: "ai" | "agent" }>,
+  scope: TemplateScope,
+  owningRuleId: string,
+): string {
+  const rendered = renderTemplate(step.prompt, scope);
+  const hints = deps.getHints?.(owningRuleId, step.id) ?? [];
+  if (hints.length === 0) return rendered;
+  return `${rendered}\n\nNotes from past corrections on this step:\n${hints.map((h) => `- ${h}`).join("\n")}`;
+}
+
+export async function runOneStep(
+  deps: ExecutorDeps,
+  step: Extract<RuleStep, { type: "ai" | "agent" }>,
+  task: Task,
+  state: RunState,
+  owningRuleId: string,
+): Promise<void> {
+  const scope = scopeFor(task, state);
+
+  if (step.type === "ai") {
+    const result = await deps.provider.complete({
+      messages: [{ role: "user", content: renderStepPrompt(deps, step, scope, owningRuleId) }],
+      maxTokens: 4000,
+      ...(step.model ? { model: step.model } : {}),
+    });
+    state.context[step.output] = result.text;
+    state.log.push({ stepId: step.id, type: step.type, output: step.output });
+    return;
+  }
+
+  const runner =
+    deps.runAgent ??
+    createInProcessRunner({
+      provider: deps.provider,
+      listTools: () => deps.listTools?.() ?? [],
+      callTool: deps.callTool,
+    });
+
+  let result;
+  try {
+    result = await runner.run({
+      prompt: renderStepPrompt(deps, step, scope, owningRuleId),
+      allowedTools: step.tools,
+      maxTurns: step.maxIterations,
+      ...(step.model ? { model: step.model } : {}),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`agent step ${step.id}: ${message}`);
+  }
+
+  for (const call of result.toolCalls) {
+    state.log.push({
+      stepId: step.id,
+      type: "agent",
+      output: call.name,
+      ...(call.error ? { error: call.error } : {}),
+    });
+  }
+
+  state.context[step.output] = result.text;
+  if (result.sessionId) state.context[`${step.output}_session`] = result.sessionId;
+  state.log.push({ stepId: step.id, type: step.type, output: step.output });
+}
+
+type AiAgentStep = Extract<RuleStep, { type: "ai" | "agent" }>;
+
+function findAiAgentStep(
+  deps: ExecutorDeps,
+  steps: RuleStep[],
+  stepId: string,
+  owningRuleId: string,
+): { step: AiAgentStep; owningRuleId: string } | null {
+  for (const step of steps) {
+    if ((step.type === "ai" || step.type === "agent") && step.id === stepId) {
+      return { step, owningRuleId };
+    }
+    if (step.type === "branch") {
+      for (const caseSteps of Object.values(step.cases)) {
+        const found = findAiAgentStep(deps, caseSteps, stepId, owningRuleId);
+        if (found) return found;
+      }
+      if (step.default) {
+        const found = findAiAgentStep(deps, step.default, stepId, owningRuleId);
+        if (found) return found;
+      }
+    }
+    if (step.type === "call_rule") {
+      const loaded = deps.loadRule(step.typeId, step.version);
+      if (loaded) {
+        const found = findAiAgentStep(deps, loaded.definition.steps, stepId, loaded.id);
+        if (found) return found;
+      }
+    }
+  }
+  return null;
+}
+
+export async function rerunStep(
+  deps: ExecutorDeps,
+  definition: RuleDefinition,
+  task: Task,
+  stepId: string,
+): Promise<{ context: Record<string, unknown>; log: StepLogEntry }> {
+  const owningRuleId = deps.self?.ruleId ?? "";
+  const found = findAiAgentStep(deps, definition.steps, stepId, owningRuleId);
+  if (!found) {
+    throw new Error(`rerunStep: no ai/agent step with id ${stepId}`);
+  }
+
+  const state: RunState = {
+    context: { ...task.context },
+    assignee: null,
+    log: [],
+    stack: [],
+  };
+
+  await runOneStep(deps, found.step, task, state, found.owningRuleId);
+
+  const patch: Record<string, unknown> = {
+    [found.step.output]: state.context[found.step.output],
+  };
+  const sessionKey = `${found.step.output}_session`;
+  if (sessionKey in state.context) {
+    patch[sessionKey] = state.context[sessionKey];
+  }
+
+  const log =
+    state.log.find(
+      (entry) => entry.stepId === found.step.id && entry.output === found.step.output,
+    ) ?? state.log.at(-1)!;
+
+  return { context: patch, log };
+}
+
 async function runSteps(
   deps: ExecutorDeps,
   steps: RuleStep[],
   task: Task,
   state: RunState,
+  owningRuleId: string,
 ): Promise<void> {
   for (const step of steps) {
     const scope = scopeFor(task, state);
 
     switch (step.type) {
-      case "ai": {
-        const result = await deps.provider.complete({
-          messages: [{ role: "user", content: renderTemplate(step.prompt, scope) }],
-          maxTokens: 4000,
-          ...(step.model ? { model: step.model } : {}),
-        });
-        state.context[step.output] = result.text;
-        state.log.push({ stepId: step.id, type: step.type, output: step.output });
+      case "ai":
+      case "agent":
+        await runOneStep(deps, step, task, state, owningRuleId);
         break;
-      }
-      case "agent": {
-        const runner =
-          deps.runAgent ??
-          createInProcessRunner({
-            provider: deps.provider,
-            listTools: () => deps.listTools?.() ?? [],
-            callTool: deps.callTool,
-          });
-
-        let result;
-        try {
-          result = await runner.run({
-            prompt: renderTemplate(step.prompt, scope),
-            allowedTools: step.tools,
-            maxTurns: step.maxIterations,
-            ...(step.model ? { model: step.model } : {}),
-          });
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          throw new Error(`agent step ${step.id}: ${message}`);
-        }
-
-        for (const call of result.toolCalls) {
-          state.log.push({
-            stepId: step.id,
-            type: "agent",
-            output: call.name,
-            ...(call.error ? { error: call.error } : {}),
-          });
-        }
-
-        state.context[step.output] = result.text;
-        // Keep the conversation id so a handoff can offer to resume it.
-        if (result.sessionId) state.context[`${step.output}_session`] = result.sessionId;
-        state.log.push({ stepId: step.id, type: step.type, output: step.output });
-        break;
-      }
       case "mcp_tool": {
         const input = renderInput(step.input, scope) as Record<string, unknown>;
         const output = await deps.callTool(step.server, step.tool, input);
@@ -188,7 +287,7 @@ async function runSteps(
         const key = typeof value === "string" ? value : JSON.stringify(value);
         const chosen = step.cases[key] ?? step.default ?? [];
         state.log.push({ stepId: step.id, type: step.type, output: key });
-        await runSteps(deps, chosen, task, state);
+        await runSteps(deps, chosen, task, state, owningRuleId);
         break;
       }
       case "call_rule": {
@@ -199,11 +298,11 @@ async function runSteps(
         if (state.stack.length >= MAX_DEPTH) {
           throw new Error(`rule nesting deeper than ${MAX_DEPTH}: ${state.stack.join(" -> ")}`);
         }
-        const child = deps.loadRule(step.typeId, step.version);
-        if (!child) throw new Error(`called rule not found: ${key}`);
+        const loaded = deps.loadRule(step.typeId, step.version);
+        if (!loaded) throw new Error(`called rule not found: ${key}`);
         state.log.push({ stepId: step.id, type: step.type, output: key });
         state.stack.push(key);
-        await runSteps(deps, child.steps, task, state);
+        await runSteps(deps, loaded.definition.steps, task, state, loaded.id);
         state.stack.pop();
         break;
       }
@@ -223,7 +322,8 @@ export async function runRule(
     stack: deps.self ? [`${deps.self.typeId}@${deps.self.version}`] : [],
   };
 
-  await runSteps(deps, definition.steps, task, state);
+  const owningRuleId = deps.self?.ruleId ?? "";
+  await runSteps(deps, definition.steps, task, state, owningRuleId);
 
   return {
     context: state.context,

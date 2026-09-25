@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { runRule } from "../../src/rule/executor";
+import { runRule, rerunStep } from "../../src/rule/executor";
 import { RuleDefinitionSchema } from "../../src/domain/rule";
 import type { AiProvider } from "../../src/ai/provider";
 import type { Task } from "../../src/domain/task";
@@ -328,7 +328,7 @@ test("call_rule runs the pinned version and merges its context", async () => {
       callTool: noTools,
       loadRule: (typeId, version) => {
         asked.push(`${typeId}@${version}`);
-        return child;
+        return { id: "child-rule", definition: child };
       },
     },
     parent,
@@ -349,8 +349,8 @@ test("a rule that calls itself fails instead of looping", async () => {
       {
         provider: scriptedProvider([]),
         callTool: noTools,
-        loadRule: () => selfCalling,
-        self: { typeId: "type-1", version: 1 },
+        loadRule: () => ({ id: "self-rule", definition: selfCalling }),
+        self: { typeId: "type-1", version: 1, ruleId: "self-rule" },
       },
       selfCalling,
       task,
@@ -436,4 +436,145 @@ test("the schema rejects an unknown step type", () => {
   expect(() =>
     RuleDefinitionSchema.parse({ steps: [{ id: "x", type: "teleport" }] }),
   ).toThrow();
+});
+
+test("hint injection appends notes only when getHints returns entries", async () => {
+  const definition = RuleDefinitionSchema.parse({
+    steps: [{ id: "s1", type: "ai", prompt: "Summarize: {{task.body}}", output: "summary" }],
+  });
+  const provider = scriptedProvider(["out"]);
+
+  await runRule(
+    {
+      provider,
+      callTool: noTools,
+      loadRule: noRules,
+      self: { typeId: "type-1", version: 1, ruleId: "rule-1" },
+      getHints: () => ["Use formal tone", "Keep it short"],
+    },
+    definition,
+    task,
+  );
+
+  expect(provider.prompts[0]).toBe(
+    "Summarize: I ordered last week.\n\nNotes from past corrections on this step:\n- Use formal tone\n- Keep it short",
+  );
+});
+
+test("hint injection omits notes when getHints is undefined or empty", async () => {
+  const definition = RuleDefinitionSchema.parse({
+    steps: [{ id: "s1", type: "ai", prompt: "Summarize: {{task.body}}", output: "summary" }],
+  });
+
+  const withoutGetter = scriptedProvider(["a"]);
+  await runRule(
+    {
+      provider: withoutGetter,
+      callTool: noTools,
+      loadRule: noRules,
+      self: { typeId: "type-1", version: 1, ruleId: "rule-1" },
+    },
+    definition,
+    task,
+  );
+  expect(withoutGetter.prompts[0]).toBe("Summarize: I ordered last week.");
+
+  const emptyHints = scriptedProvider(["b"]);
+  await runRule(
+    {
+      provider: emptyHints,
+      callTool: noTools,
+      loadRule: noRules,
+      self: { typeId: "type-1", version: 1, ruleId: "rule-1" },
+      getHints: () => [],
+    },
+    definition,
+    task,
+  );
+  expect(emptyHints.prompts[0]).toBe("Summarize: I ordered last week.");
+});
+
+test("rerunStep finds a top-level ai step and patches only that context key", async () => {
+  const definition = RuleDefinitionSchema.parse({
+    steps: [
+      { id: "s1", type: "ai", prompt: "First", output: "summary" },
+      { id: "s2", type: "ai", prompt: "Second", output: "category" },
+    ],
+  });
+  const provider = scriptedProvider(["fresh summary"]);
+  const taskWithContext = { ...task, context: { summary: "old", category: "keep-me", extra: 1 } };
+
+  const { context, log } = await rerunStep(
+    { provider, callTool: noTools, loadRule: noRules, self: { typeId: "t", version: 1, ruleId: "r1" } },
+    definition,
+    taskWithContext,
+    "s1",
+  );
+
+  expect(context).toEqual({ summary: "fresh summary" });
+  expect(log).toEqual({ stepId: "s1", type: "ai", output: "summary" });
+  expect(taskWithContext.context).toEqual({ summary: "old", category: "keep-me", extra: 1 });
+});
+
+test("rerunStep finds a step nested inside a branch case", async () => {
+  const definition = RuleDefinitionSchema.parse({
+    steps: [
+      {
+        id: "branch",
+        type: "branch",
+        on: "category",
+        cases: {
+          x: [{ id: "nested", type: "ai", prompt: "Nested {{task.title}}", output: "out" }],
+        },
+      },
+    ],
+  });
+  const provider = scriptedProvider(["nested result"]);
+
+  const { context } = await rerunStep(
+    { provider, callTool: noTools, loadRule: noRules },
+    definition,
+    { ...task, context: { category: "x", out: "stale" } },
+    "nested",
+  );
+
+  expect(context).toEqual({ out: "nested result" });
+});
+
+test("rerunStep finds a step inside a called sub-rule", async () => {
+  const child = RuleDefinitionSchema.parse({
+    steps: [{ id: "child-ai", type: "ai", prompt: "Child {{task.title}}", output: "summary" }],
+  });
+  const parent = RuleDefinitionSchema.parse({
+    steps: [{ id: "call", type: "call_rule", typeId: "type-2", version: 1 }],
+  });
+  const provider = scriptedProvider(["from child"]);
+
+  const { context } = await rerunStep(
+    {
+      provider,
+      callTool: noTools,
+      loadRule: () => ({ id: "child-rule-id", definition: child }),
+    },
+    parent,
+    { ...task, context: { summary: "old" } },
+    "child-ai",
+  );
+
+  expect(context).toEqual({ summary: "from child" });
+});
+
+test("rerunStep throws when the step id does not exist", async () => {
+  const definition = RuleDefinitionSchema.parse({
+    steps: [{ id: "s1", type: "ai", prompt: "x", output: "y" }],
+  });
+
+  await expect(
+    rerunStep(
+      { provider: scriptedProvider([]), callTool: noTools, loadRule: noRules },
+      definition,
+      task,
+      "missing",
+    ),
+  ).rejects.toThrow(/missing/i);
 });
