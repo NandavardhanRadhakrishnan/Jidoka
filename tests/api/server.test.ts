@@ -2,6 +2,8 @@ import { test, expect } from "bun:test";
 import { openDb, migrate } from "../../src/db";
 import { getTask, insertTask, updateTask, deleteTask } from "../../src/repo/tasks";
 import { insertTaskType } from "../../src/repo/taskTypes";
+import { insertRule, activateRule } from "../../src/repo/rules";
+import { insertHint, listHintsForRule } from "../../src/repo/hints";
 import { createServer } from "../../src/api/server";
 import type { AppDeps } from "../../src/orchestrator";
 import type { AiProvider } from "../../src/ai/provider";
@@ -484,4 +486,242 @@ test("POST /api/tasks/:id/mark-duplicate rejects an unknown target, self-referen
     }),
   );
   expect(whileProcessing.status).toBe(409);
+});
+
+test("GET /api/rules/:id/hints lists hints and 404s for an unknown rule", async () => {
+  const { deps, fetch } = app();
+  const type = insertTaskType(deps.db, { name: "Email", description: "d" });
+  const rule = insertRule(deps.db, {
+    typeId: type.id,
+    definition: {
+      steps: [
+        { id: "s1", type: "ai", prompt: "x", output: "y" },
+        { id: "s2", type: "assign", to: "human" },
+      ],
+    },
+  });
+  insertHint(deps.db, { ruleId: rule.id, stepId: "s1", text: "Be polite" });
+
+  const ok = (await (
+    await fetch(new Request(`http://localhost/api/rules/${rule.id}/hints`))
+  ).json()) as { hints: { text: string }[] };
+  expect(ok.hints.map((h) => h.text)).toEqual(["Be polite"]);
+
+  expect(
+    (await fetch(new Request("http://localhost/api/rules/ghost/hints"))).status,
+  ).toBe(404);
+});
+
+test("POST /api/rules/:id/hints creates a hint and validates input", async () => {
+  const { deps, fetch } = app();
+  const type = insertTaskType(deps.db, { name: "Email", description: "d" });
+  const rule = insertRule(deps.db, {
+    typeId: type.id,
+    definition: {
+      steps: [
+        { id: "s1", type: "ai", prompt: "x", output: "y" },
+        { id: "s2", type: "assign", to: "human" },
+      ],
+    },
+  });
+
+  const created = (await (
+    await fetch(
+      new Request(`http://localhost/api/rules/${rule.id}/hints`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ stepId: "s1", text: "Use formal tone" }),
+      }),
+    )
+  ).json()) as { hint: { ruleId: string; stepId: string; text: string } };
+  expect(created.hint).toMatchObject({ ruleId: rule.id, stepId: "s1", text: "Use formal tone" });
+
+  const bad = await fetch(
+    new Request(`http://localhost/api/rules/${rule.id}/hints`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ stepId: "s1" }),
+    }),
+  );
+  expect(bad.status).toBe(400);
+
+  expect(
+    (
+      await fetch(
+        new Request("http://localhost/api/rules/ghost/hints", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ stepId: "s1", text: "x" }),
+        }),
+      )
+    ).status,
+  ).toBe(404);
+});
+
+test("POST /api/tasks/:id/hints attaches to the type's active rule", async () => {
+  const { deps, fetch } = app();
+  const type = insertTaskType(deps.db, { name: "Email", description: "d" });
+  const rule = activateRule(
+    deps.db,
+    insertRule(deps.db, {
+      typeId: type.id,
+      definition: {
+        steps: [
+          { id: "s1", type: "ai", prompt: "x", output: "y" },
+          { id: "s2", type: "assign", to: "human" },
+        ],
+      },
+    }).id,
+  );
+  const task = updateTask(deps.db, insertTask(deps.db, { sourceId: "s", externalId: "e", title: "T", body: "b" }).id, {
+    typeId: type.id,
+  });
+
+  const created = (await (
+    await fetch(
+      new Request(`http://localhost/api/tasks/${task.id}/hints`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ stepId: "s1", text: "From task drawer" }),
+      }),
+    )
+  ).json()) as { hint: { ruleId: string; text: string } };
+  expect(created.hint.ruleId).toBe(rule.id);
+  expect(listHintsForRule(deps.db, rule.id)).toHaveLength(1);
+
+  const noRule = insertTask(deps.db, { sourceId: "s", externalId: "e2", title: "T2", body: "b" });
+  expect(
+    (
+      await fetch(
+        new Request(`http://localhost/api/tasks/${noRule.id}/hints`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ stepId: "s1", text: "x" }),
+        }),
+      )
+    ).status,
+  ).toBe(400);
+});
+
+test("DELETE /api/hints/:id removes the hint and succeeds even when missing", async () => {
+  const { deps, fetch } = app();
+  const type = insertTaskType(deps.db, { name: "Email", description: "d" });
+  const rule = insertRule(deps.db, {
+    typeId: type.id,
+    definition: {
+      steps: [
+        { id: "s1", type: "ai", prompt: "x", output: "y" },
+        { id: "s2", type: "assign", to: "human" },
+      ],
+    },
+  });
+  const hint = insertHint(deps.db, { ruleId: rule.id, stepId: "s1", text: "gone soon" });
+
+  const deleted = await fetch(new Request(`http://localhost/api/hints/${hint.id}`, { method: "DELETE" }));
+  expect(deleted.status).toBe(204);
+  expect(listHintsForRule(deps.db, rule.id)).toHaveLength(0);
+
+  const again = await fetch(new Request("http://localhost/api/hints/ghost", { method: "DELETE" }));
+  expect(again.status).toBe(204);
+});
+
+test("POST /api/tasks/:id/rerun-step reruns one step and surfaces errors as 409", async () => {
+  const { deps, fetch } = app(["rerun output"]);
+  const type = insertTaskType(deps.db, { name: "Email", description: "d" });
+  activateRule(
+    deps.db,
+    insertRule(deps.db, {
+      typeId: type.id,
+      definition: {
+        steps: [
+          { id: "s1", type: "ai", prompt: "x", output: "summary" },
+          { id: "s2", type: "assign", to: "human" },
+        ],
+      },
+    }).id,
+  );
+  const task = updateTask(deps.db, insertTask(deps.db, { sourceId: "s", externalId: "e", title: "T", body: "b" }).id, {
+    typeId: type.id,
+    state: "assigned_human",
+    assignee: "human",
+    context: {
+      summary: "old",
+      ruleLog: [{ stepId: "s1", type: "ai", output: "summary" }],
+    },
+  });
+
+  const ok = (await (
+    await fetch(
+      new Request(`http://localhost/api/tasks/${task.id}/rerun-step`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ stepId: "s1" }),
+      }),
+    )
+  ).json()) as { task: { context: { summary: string; ruleLog: unknown[] }; state: string; assignee: string } };
+  expect(ok.task.context.summary).toBe("rerun output");
+  expect(ok.task.state).toBe("assigned_human");
+  expect(ok.task.assignee).toBe("human");
+  expect(ok.task.context.ruleLog).toHaveLength(2);
+
+  const missingStep = await fetch(
+    new Request(`http://localhost/api/tasks/${task.id}/rerun-step`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ stepId: "ghost-step" }),
+    }),
+  );
+  expect(missingStep.status).toBe(409);
+
+  expect(
+    (
+      await fetch(
+        new Request("http://localhost/api/tasks/nope/rerun-step", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ stepId: "s1" }),
+        }),
+      )
+    ).status,
+  ).toBe(404);
+});
+
+test("GET /api/tasks/:id/dependents returns safe and unsafe step ids", async () => {
+  const { deps, fetch } = app();
+  const type = insertTaskType(deps.db, { name: "Email", description: "d" });
+  activateRule(
+    deps.db,
+    insertRule(deps.db, {
+      typeId: type.id,
+      definition: {
+        steps: [
+          { id: "a", type: "ai", prompt: "extract", output: "fields" },
+          { id: "b", type: "ai", prompt: "from {{context.fields}}", output: "query" },
+          { id: "c", type: "assign", to: "human" },
+        ],
+      },
+    }).id,
+  );
+  const task = updateTask(deps.db, insertTask(deps.db, { sourceId: "s", externalId: "e", title: "T", body: "b" }).id, {
+    typeId: type.id,
+    context: {
+      fields: "x",
+      ruleLog: [
+        { stepId: "a", type: "ai", output: "fields" },
+        { stepId: "b", type: "ai", output: "query" },
+      ],
+    },
+  });
+
+  const ok = (await (
+    await fetch(new Request(`http://localhost/api/tasks/${task.id}/dependents?stepId=a`))
+  ).json()) as { safe: string[]; unsafe: string[] };
+  expect(ok).toEqual({ safe: ["b"], unsafe: [] });
+
+  const noParam = await fetch(new Request(`http://localhost/api/tasks/${task.id}/dependents`));
+  expect(noParam.status).toBe(400);
+
+  expect(
+    (await fetch(new Request("http://localhost/api/tasks/ghost/dependents?stepId=a"))).status,
+  ).toBe(404);
 });

@@ -5,6 +5,7 @@ import { validateReferences } from "../rule/builder";
 import { findTaskBySource, getTask, insertTask, listTasks } from "../repo/tasks";
 import { getTaskType, listTaskTypes, mergeTaskType, updateTaskType } from "../repo/taskTypes";
 import { getActiveRule, getRule, insertRule, listRules } from "../repo/rules";
+import { deleteHint, insertHint, listHintsForRule } from "../repo/hints";
 import {
   activateTypeRule,
   completeTask,
@@ -15,6 +16,8 @@ import {
   skipOnboarding,
   resolveDuplicate,
   markDuplicate,
+  rerunStep,
+  getDependents,
   type AppDeps,
 } from "../orchestrator";
 
@@ -224,6 +227,80 @@ export function createServer(deps: AppDeps, extraRoutes?: Hono): Hono {
     }
 
     return c.json({ rule: insertRule(deps.db, { typeId: id, definition: parsed.data }) });
+  });
+
+  app.get("/api/rules/:id/hints", (c) => {
+    const id = c.req.param("id");
+    if (!getRule(deps.db, id)) return c.json({ error: "unknown rule" }, 404);
+    return c.json({ hints: listHintsForRule(deps.db, id) });
+  });
+
+  app.post("/api/rules/:id/hints", async (c) => {
+    const id = c.req.param("id");
+    if (!getRule(deps.db, id)) return c.json({ error: "unknown rule" }, 404);
+    const input = await readJson<{ stepId?: string; text?: string; excerpt?: string }>(c);
+    if (!input?.stepId?.trim() || !input.text?.trim()) {
+      return c.json({ error: "stepId and text are required" }, 400);
+    }
+    return c.json({
+      hint: insertHint(deps.db, {
+        ruleId: id,
+        stepId: input.stepId.trim(),
+        text: input.text.trim(),
+        excerpt: input.excerpt,
+      }),
+    });
+  });
+
+  app.post("/api/tasks/:id/hints", async (c) => {
+    const id = c.req.param("id");
+    const task = getTask(deps.db, id);
+    if (!task) return c.json({ error: "unknown task" }, 404);
+    if (!task.typeId) return c.json({ error: "task has no type" }, 400);
+    const active = getActiveRule(deps.db, task.typeId);
+    if (!active) return c.json({ error: "no active rule" }, 404);
+    const input = await readJson<{ stepId?: string; text?: string; excerpt?: string }>(c);
+    if (!input?.stepId?.trim() || !input.text?.trim()) {
+      return c.json({ error: "stepId and text are required" }, 400);
+    }
+    return c.json({
+      hint: insertHint(deps.db, {
+        ruleId: active.id,
+        stepId: input.stepId.trim(),
+        text: input.text.trim(),
+        excerpt: input.excerpt,
+      }),
+    });
+  });
+
+  app.delete("/api/hints/:id", (c) => {
+    deleteHint(deps.db, c.req.param("id"));
+    return c.body(null, 204);
+  });
+
+  app.post("/api/tasks/:id/rerun-step", async (c) => {
+    const id = c.req.param("id");
+    if (!getTask(deps.db, id)) return c.json({ error: "unknown task" }, 404);
+    const input = await readJson<{ stepId?: string }>(c);
+    if (!input?.stepId?.trim()) return c.json({ error: "stepId is required" }, 400);
+    try {
+      const task = await rerunStep(deps, id, input.stepId.trim());
+      return c.json({ task });
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : String(error) }, 409);
+    }
+  });
+
+  app.get("/api/tasks/:id/dependents", (c) => {
+    const id = c.req.param("id");
+    if (!getTask(deps.db, id)) return c.json({ error: "unknown task" }, 404);
+    const stepId = c.req.query("stepId");
+    if (!stepId?.trim()) return c.json({ error: "stepId is required" }, 400);
+    try {
+      return c.json(getDependents(deps, id, stepId.trim()));
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : String(error) }, 409);
+    }
   });
 
   return app;

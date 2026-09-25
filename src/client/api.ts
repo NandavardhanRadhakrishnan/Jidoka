@@ -1,10 +1,12 @@
 import type { Task } from "../domain/task";
 import type { TaskType } from "../domain/taskType";
 import type { Rule, RuleDefinition } from "../domain/rule";
+import type { Hint } from "../domain/hint";
 import type { ExtensionAuth } from "../domain/extension";
 import type { ToolSpec } from "../ai/provider";
 
 export type { Rule };
+export type { Hint };
 
 export interface ModelOption {
   id: string;
@@ -89,6 +91,34 @@ export const api = {
   tasks: () => json<{ tasks: Task[] }>("/api/tasks").then((r) => r.tasks),
   types: () => json<{ types: TypeWithRules[] }>("/api/types").then((r) => r.types),
   rule: (id: string) => json<{ rule: Rule }>(`/api/rules/${id}`).then((r) => r.rule),
+  ruleHints: (ruleId: string) =>
+    json<{ hints: Hint[] }>(`/api/rules/${ruleId}/hints`).then((r) => r.hints),
+  addRuleHint: (ruleId: string, input: { stepId: string; text: string; excerpt?: string }) =>
+    json<{ hint: Hint }>(`/api/rules/${ruleId}/hints`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }).then((r) => r.hint),
+  addTaskHint: (taskId: string, input: { stepId: string; text: string; excerpt?: string }) =>
+    json<{ hint: Hint }>(`/api/tasks/${taskId}/hints`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }).then((r) => r.hint),
+  deleteHint: async (hintId: string) => {
+    const response = await fetch(`/api/hints/${hintId}`, { method: "DELETE" });
+    if (!response.ok) {
+      const body = (await response.json().catch(() => ({}))) as { error?: string };
+      throw new Error(body.error ?? `request failed: ${response.status}`);
+    }
+  },
+  rerunStep: (taskId: string, stepId: string) =>
+    json<{ task: Task }>(`/api/tasks/${taskId}/rerun-step`, {
+      method: "POST",
+      body: JSON.stringify({ stepId }),
+    }).then((r) => r.task),
+  dependents: (taskId: string, stepId: string) =>
+    json<{ safe: string[]; unsafe: string[] }>(
+      `/api/tasks/${taskId}/dependents?stepId=${encodeURIComponent(stepId)}`,
+    ),
   auth: () =>
     json<{ providers: AuthProviderStatus[] }>("/api/auth").then((r) => r.providers),
   signOut: (providerId: string) =>
