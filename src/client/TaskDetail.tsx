@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { Task } from "../domain/task";
+import type { Hint } from "../domain/hint";
 import { api, type HandoffTarget } from "./api";
 import { Handoff, openUrlTargets } from "./Handoff";
 import { daysUntil, deadlineUrgency } from "./columns";
@@ -35,48 +36,152 @@ const INTERNAL_KEYS = new Set([
 
 const smallGhostBtn = { fontSize: 11, padding: 0 } as const;
 
-function StepOutputActions({
+const hintBtnStyle = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 4,
+  border: 0,
+  background: "transparent",
+  color: "var(--color-neutral-700)",
+  cursor: "pointer",
+  padding: "2px 4px",
+  fontFamily: "var(--font-heading)",
+  fontWeight: 800,
+  fontSize: 11,
+} as const;
+
+function stepFromLabel(producer: { type: string; stepId: string } | undefined): string | null {
+  if (!producer) return null;
+  const typeLabel = producer.type === "mcp_tool" ? "tool" : producer.type;
+  return `${typeLabel} step · ${producer.stepId}`;
+}
+
+function ArtifactHeadActions({
+  copyable,
+  copyText,
+  hintButton,
+  provenance,
+}: {
+  copyable: boolean;
+  copyText: string;
+  hintButton?: ReactNode;
+  provenance: { text: string; kind: "note" | "produced" | "unknown" };
+}) {
+  async function copyOutput() {
+    try {
+      await navigator.clipboard.writeText(copyText);
+    } catch {
+      /* clipboard unavailable */
+    }
+  }
+
+  return (
+    <span className="artifact-head-actions">
+      {copyable && (
+        <button type="button" className="btn btn-ghost" style={smallGhostBtn} onClick={() => void copyOutput()}>
+          Copy
+        </button>
+      )}
+      {hintButton}
+      <span className={`provenance-badge provenance-${provenance.kind}`}>{provenance.text}</span>
+    </span>
+  );
+}
+
+function StepOutput({
   taskId,
+  taskState,
   stepId,
+  outputKey,
+  from,
+  copyable,
+  body,
+  provenance,
   onChanged,
 }: {
   taskId: string;
+  taskState: Task["state"];
   stepId: string;
+  outputKey: string;
+  from: string | null;
+  copyable: boolean;
+  body: string;
+  provenance: { text: string; kind: "note" | "produced" | "unknown" };
   onChanged: () => Promise<void>;
 }) {
-  const [hintOpen, setHintOpen] = useState(false);
-  const [hintText, setHintText] = useState("");
-  const [hintExcerpt, setHintExcerpt] = useState<string | undefined>(undefined);
-  const [hintSaved, setHintSaved] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [actionError, setActionError] = useState<string | null>(null);
+  const closed = taskState === "done";
+  const [hints, setHints] = useState<Hint[]>([]);
   const [dependents, setDependents] = useState<{ safe: string[]; unsafe: string[] }>({
     safe: [],
     unsafe: [],
   });
+  const [hintOpen, setHintOpen] = useState(false);
+  const [hintText, setHintText] = useState("");
+  const [hintExcerpt, setHintExcerpt] = useState<string | undefined>(undefined);
+  const [popover, setPopover] = useState<{ x: number; y: number; text: string } | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [lastRerun, setLastRerun] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const hintAreaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     let cancelled = false;
-    void api.dependents(taskId, stepId).then((result) => {
-      if (!cancelled) setDependents(result);
-    });
+    void Promise.all([api.taskStepHints(taskId, stepId), api.dependents(taskId, stepId)]).then(
+      ([loadedHints, deps]) => {
+        if (!cancelled) {
+          setHints(loadedHints);
+          setDependents(deps);
+        }
+      },
+    );
     return () => {
       cancelled = true;
     };
   }, [taskId, stepId]);
 
-  function openHintForm() {
-    const selection = window.getSelection()?.toString().trim();
-    if (selection) {
-      setHintText(`> ${selection}\n\n`);
-      setHintExcerpt(selection);
-    } else {
-      setHintText("");
-      setHintExcerpt(undefined);
-    }
+  useEffect(() => {
+    const drawer = document.querySelector(".drawer");
+    if (!drawer) return;
+    const hide = () => setPopover(null);
+    drawer.addEventListener("scroll", hide);
+    return () => drawer.removeEventListener("scroll", hide);
+  }, []);
+
+  useEffect(() => {
+    if (hintOpen) hintAreaRef.current?.focus();
+  }, [hintOpen]);
+
+  function openHintForm(excerpt?: string) {
+    setHintText("");
+    setHintExcerpt(excerpt);
     setHintOpen(true);
-    setHintSaved(false);
+    setPopover(null);
     setActionError(null);
+    if (excerpt) {
+      try {
+        window.getSelection()?.removeAllRanges();
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  function onContentMouseUp() {
+    setTimeout(() => {
+      const sel = window.getSelection();
+      const text = sel?.toString().trim() ?? "";
+      if (!text || !sel?.rangeCount) {
+        setPopover(null);
+        return;
+      }
+      const rect = sel.getRangeAt(0).getBoundingClientRect();
+      setPopover({ x: rect.left + rect.width / 2, y: rect.top, text });
+    }, 0);
+  }
+
+  async function reloadHints() {
+    setHints(await api.taskStepHints(taskId, stepId));
   }
 
   async function saveHint() {
@@ -87,7 +192,24 @@ function StepOutputActions({
     try {
       await api.addTaskHint(taskId, { stepId, text, excerpt: hintExcerpt });
       setHintOpen(false);
-      setHintSaved(true);
+      setHintText("");
+      setHintExcerpt(undefined);
+      setLastRerun(null);
+      await reloadHints();
+      setExpanded(true);
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteStepHint(id: string) {
+    setBusy(true);
+    setActionError(null);
+    try {
+      await api.deleteHint(id);
+      await reloadHints();
     } catch (e) {
       setActionError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -100,6 +222,7 @@ function StepOutputActions({
     setActionError(null);
     try {
       await api.rerunStep(taskId, stepId);
+      setLastRerun("re-ran just now");
       await onChanged();
     } catch (e) {
       setActionError(e instanceof Error ? e.message : String(e));
@@ -116,6 +239,9 @@ function StepOutputActions({
       for (const dependentId of dependents.safe) {
         await api.rerunStep(taskId, dependentId);
       }
+      setLastRerun(
+        dependents.safe.length > 0 ? `re-ran with ${dependents.safe.length} downstream` : "re-ran just now",
+      );
       await onChanged();
     } catch (e) {
       setActionError(e instanceof Error ? e.message : String(e));
@@ -124,42 +250,132 @@ function StepOutputActions({
     }
   }
 
+  const hintCountLabel = `${hints.length} hint${hints.length === 1 ? "" : "s"} on this step`;
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 6 }}>
-      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
-        {!hintOpen ? (
-          <button type="button" className="btn btn-ghost" style={smallGhostBtn} disabled={busy} onClick={openHintForm}>
-            + hint
-          </button>
-        ) : null}
-        <button type="button" className="btn btn-ghost" style={smallGhostBtn} disabled={busy} onClick={() => void rerunPrimary()}>
-          {busy ? "Re-running…" : "Re-run this step"}
-        </button>
-        {dependents.safe.length > 0 && (
-          <button
-            type="button"
-            className="btn btn-ghost"
-            style={smallGhostBtn}
-            disabled={busy}
-            onClick={() => void rerunWithDependents()}
-          >
-            Also rerun {dependents.safe.length} downstream step(s)
-          </button>
-        )}
-        {dependents.unsafe.length > 0 && (
-          <span style={{ fontSize: 11, color: "var(--color-neutral-700)" }}>
-            also feeds into {dependents.unsafe.length} step(s) not rerun automatically
-          </span>
-        )}
-        {hintSaved && !hintOpen && (
-          <span style={{ fontSize: 11, color: "var(--color-neutral-700)" }}>Saved</span>
-        )}
+    <div className="artifact">
+      <div className="head">
+        <span className="mono key">{outputKey}</span>
+        {from && <span style={{ fontSize: 11, color: "var(--color-neutral-600)" }}>{from}</span>}
+        <ArtifactHeadActions
+          copyable={copyable}
+          copyText={body}
+          provenance={provenance}
+          hintButton={
+            <button
+              type="button"
+              title="Add a hint for this step, or select text in the output"
+              style={hintBtnStyle}
+              onClick={() => openHintForm()}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.color = "var(--color-accent)";
+                e.currentTarget.style.background = "color-mix(in srgb, var(--color-accent) 10%, transparent)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.color = "var(--color-neutral-700)";
+                e.currentTarget.style.background = "transparent";
+              }}
+            >
+              <Icon name="message-square-plus" size={13} />
+              Hint
+            </button>
+          }
+        />
       </div>
+      <div className="content" onMouseUp={onContentMouseUp}>
+        {body}
+      </div>
+      {popover && !hintOpen && (
+        <button
+          type="button"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => openHintForm(popover.text)}
+          style={{
+            position: "fixed",
+            left: popover.x,
+            top: popover.y - 38,
+            transform: "translateX(-50%)",
+            zIndex: 60,
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 5,
+            padding: "6px 10px",
+            border: 0,
+            background: "var(--color-neutral-900)",
+            color: "var(--color-bg)",
+            fontFamily: "var(--font-heading)",
+            fontWeight: 800,
+            fontSize: 12,
+            cursor: "pointer",
+            boxShadow: "var(--shadow-md)",
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = "var(--color-accent)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = "var(--color-neutral-900)";
+          }}
+        >
+          <Icon name="message-square-plus" size={13} />
+          Add hint
+        </button>
+      )}
       {hintOpen && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          <textarea className="input" rows={3} value={hintText} onChange={(e) => setHintText(e.target.value)} />
-          <div style={{ display: "flex", gap: 8 }}>
-            <button type="button" className="btn btn-secondary" disabled={busy || !hintText.trim()} onClick={() => void saveHint()}>
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 8,
+            padding: "10px 12px",
+            borderTop: "1px solid var(--color-divider)",
+            background: "var(--color-bg)",
+          }}
+        >
+          {hintExcerpt && (
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 2,
+                fontSize: 12,
+                lineHeight: 1.5,
+                color: "var(--color-neutral-800)",
+                padding: "6px 9px",
+                background: "var(--color-surface)",
+                border: "1px solid var(--color-divider)",
+              }}
+            >
+              <span
+                className="mono"
+                style={{
+                  fontSize: 9.5,
+                  letterSpacing: "0.1em",
+                  textTransform: "uppercase",
+                  color: "var(--color-neutral-600)",
+                }}
+              >
+                About this passage
+              </span>
+              <span>“{hintExcerpt}”</span>
+            </div>
+          )}
+          <textarea
+            ref={hintAreaRef}
+            className="input"
+            rows={3}
+            value={hintText}
+            onChange={(e) => setHintText(e.target.value)}
+            placeholder="What should this step do differently next time?"
+            style={{ minHeight: 72, fontSize: 13 }}
+          />
+          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              style={{ padding: "5px 10px", fontSize: 12 }}
+              disabled={busy || !hintText.trim()}
+              onClick={() => void saveHint()}
+            >
               Save hint
             </button>
             <button
@@ -167,14 +383,147 @@ function StepOutputActions({
               className="btn btn-ghost"
               style={smallGhostBtn}
               disabled={busy}
-              onClick={() => setHintOpen(false)}
+              onClick={() => {
+                setHintOpen(false);
+                setHintExcerpt(undefined);
+              }}
             >
               Cancel
             </button>
+            <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--color-neutral-600)" }}>
+              Added to every future run of <span className="mono">{outputKey}</span>
+            </span>
           </div>
+          {actionError && <p className="error-text" style={{ margin: 0 }}>{actionError}</p>}
         </div>
       )}
-      {actionError && <p className="error-text" style={{ margin: 0 }}>{actionError}</p>}
+      {hints.length > 0 && (
+        <div style={{ borderTop: "1px solid var(--color-divider)" }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+              padding: "7px 12px",
+              flexWrap: "wrap",
+            }}
+          >
+            <button
+              type="button"
+              className="mono"
+              onClick={() => setExpanded((v) => !v)}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 5,
+                border: 0,
+                background: "transparent",
+                padding: 0,
+                cursor: "pointer",
+                fontSize: 11,
+                color: "var(--color-neutral-800)",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.color = "var(--color-accent)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.color = "var(--color-neutral-800)";
+              }}
+            >
+              <Icon name="message-square-plus" size={12} />
+              {hintCountLabel}
+              <Icon name={expanded ? "chevron-up" : "chevron-down"} size={12} />
+            </button>
+            <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+              {!busy && lastRerun && (
+                <span className="mono" style={{ fontSize: 10.5, color: "var(--color-accent-700)" }}>
+                  {lastRerun}
+                </span>
+              )}
+              {!closed ? (
+                <>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    style={{ ...smallGhostBtn, display: "inline-flex", alignItems: "center", gap: 4 }}
+                    disabled={busy}
+                    onClick={() => void rerunPrimary()}
+                  >
+                    <Icon name="rotate-ccw" size={12} />
+                    {busy ? "Re-running…" : "Re-run with hints"}
+                  </button>
+                  {dependents.safe.length > 0 && (
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      style={smallGhostBtn}
+                      disabled={busy}
+                      title="Also rerun the steps that read this output"
+                      onClick={() => void rerunWithDependents()}
+                    >
+                      + {dependents.safe.length} downstream
+                    </button>
+                  )}
+                </>
+              ) : (
+                <span style={{ fontSize: 11, color: "var(--color-neutral-600)" }}>Applies to future runs</span>
+              )}
+            </span>
+          </div>
+          {expanded && (
+            <div style={{ padding: "0 12px 8px", display: "flex", flexDirection: "column" }}>
+              {hints.map((hint) => (
+                <div
+                  key={hint.id}
+                  style={{
+                    display: "flex",
+                    gap: 12,
+                    alignItems: "flex-start",
+                    padding: "7px 0",
+                    borderTop: "1px solid var(--color-divider)",
+                    fontSize: 12.5,
+                    lineHeight: 1.5,
+                  }}
+                >
+                  <span style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
+                    {hint.excerpt && (
+                      <span style={{ fontSize: 11, color: "var(--color-neutral-600)" }}>on “{hint.excerpt}”</span>
+                    )}
+                    <span style={{ textWrap: "pretty" } as CSSProperties}>{hint.text}</span>
+                  </span>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    style={smallGhostBtn}
+                    disabled={busy}
+                    onClick={() => void deleteStepHint(hint.id)}
+                  >
+                    Delete
+                  </button>
+                </div>
+              ))}
+              {!closed && dependents.unsafe.length > 0 && (
+                <span
+                  style={{
+                    fontSize: 11,
+                    color: "var(--color-neutral-700)",
+                    paddingTop: 7,
+                    borderTop: "1px solid var(--color-divider)",
+                  }}
+                >
+                  Also feeds {dependents.unsafe.length} tool or branch step
+                  {dependents.unsafe.length === 1 ? "" : "s"}, which won&apos;t rerun automatically.
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+      {!hintOpen && actionError && (
+        <p className="error-text" style={{ margin: 0, padding: hints.length > 0 ? "0 12px 8px" : "0 12px 8px" }}>
+          {actionError}
+        </p>
+      )}
     </div>
   );
 }
@@ -350,16 +699,33 @@ export function TaskDetail({
               {outputs.map(([key, value]) => {
                 const provenance = provenanceLabel(key);
                 const producer = producedBy.get(key);
+                const from = stepFromLabel(producer);
+                const body = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+                const copyable = typeof value === "string" && value.length > 0;
+                if (producer && (producer.type === "ai" || producer.type === "agent")) {
+                  return (
+                    <StepOutput
+                      key={key}
+                      taskId={task.id}
+                      taskState={task.state}
+                      stepId={producer.stepId}
+                      outputKey={key}
+                      from={from}
+                      copyable={copyable}
+                      body={body}
+                      provenance={provenance}
+                      onChanged={onChanged}
+                    />
+                  );
+                }
                 return (
                   <div key={key} className="artifact">
                     <div className="head">
                       <span className="mono key">{key}</span>
-                      <span className={`provenance-badge provenance-${provenance.kind}`}>{provenance.text}</span>
+                      {from && <span style={{ fontSize: 11, color: "var(--color-neutral-600)" }}>{from}</span>}
+                      <ArtifactHeadActions copyable={copyable} copyText={body} provenance={provenance} />
                     </div>
-                    <div className="content">{typeof value === "string" ? value : JSON.stringify(value, null, 2)}</div>
-                    {producer && (producer.type === "ai" || producer.type === "agent") && (
-                      <StepOutputActions taskId={task.id} stepId={producer.stepId} onChanged={onChanged} />
-                    )}
+                    <div className="content">{body}</div>
                   </div>
                 );
               })}

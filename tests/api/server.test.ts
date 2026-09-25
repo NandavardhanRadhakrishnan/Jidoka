@@ -3,7 +3,7 @@ import { openDb, migrate } from "../../src/db";
 import { getTask, insertTask, updateTask, deleteTask } from "../../src/repo/tasks";
 import { insertTaskType } from "../../src/repo/taskTypes";
 import { insertRule, activateRule } from "../../src/repo/rules";
-import { insertHint, listHintsForRule } from "../../src/repo/hints";
+import { insertHint, listHintsForRule, listHintsForStep } from "../../src/repo/hints";
 import { createServer } from "../../src/api/server";
 import type { AppDeps } from "../../src/orchestrator";
 import type { AiProvider } from "../../src/ai/provider";
@@ -603,6 +603,39 @@ test("POST /api/tasks/:id/hints attaches to the type's active rule", async () =>
   ).toBe(400);
 });
 
+test("GET /api/tasks/:id/hints lists hints for a step on the active rule", async () => {
+  const { deps, fetch } = app();
+  const type = insertTaskType(deps.db, { name: "Email", description: "d" });
+  const rule = activateRule(
+    deps.db,
+    insertRule(deps.db, {
+      typeId: type.id,
+      definition: {
+        steps: [
+          { id: "s1", type: "ai", prompt: "x", output: "y" },
+          { id: "s2", type: "assign", to: "human" },
+        ],
+      },
+    }).id,
+  );
+  insertHint(deps.db, { ruleId: rule.id, stepId: "s1", text: "Step one" });
+  insertHint(deps.db, { ruleId: rule.id, stepId: "s2", text: "Other step" });
+  const task = updateTask(deps.db, insertTask(deps.db, { sourceId: "s", externalId: "e", title: "T", body: "b" }).id, {
+    typeId: type.id,
+  });
+
+  const ok = (await (
+    await fetch(new Request(`http://localhost/api/tasks/${task.id}/hints?stepId=s1`))
+  ).json()) as { hints: { text: string }[] };
+  expect(ok.hints.map((h) => h.text)).toEqual(["Step one"]);
+  expect(listHintsForStep(deps.db, rule.id, "s1")).toHaveLength(1);
+
+  expect(
+    (await fetch(new Request(`http://localhost/api/tasks/${task.id}/hints`))).status,
+  ).toBe(400);
+  expect((await fetch(new Request("http://localhost/api/tasks/ghost/hints?stepId=s1"))).status).toBe(404);
+});
+
 test("DELETE /api/hints/:id removes the hint and succeeds even when missing", async () => {
   const { deps, fetch } = app();
   const type = insertTaskType(deps.db, { name: "Email", description: "d" });
@@ -672,6 +705,19 @@ test("POST /api/tasks/:id/rerun-step reruns one step and surfaces errors as 409"
     }),
   );
   expect(missingStep.status).toBe(409);
+
+  const done = updateTask(deps.db, task.id, { state: "done" });
+  expect(
+    (
+      await fetch(
+        new Request(`http://localhost/api/tasks/${done.id}/rerun-step`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ stepId: "s1" }),
+        }),
+      )
+    ).status,
+  ).toBe(409);
 
   expect(
     (

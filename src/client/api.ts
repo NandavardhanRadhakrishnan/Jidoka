@@ -119,6 +119,10 @@ export const api = {
     json<{ safe: string[]; unsafe: string[] }>(
       `/api/tasks/${taskId}/dependents?stepId=${encodeURIComponent(stepId)}`,
     ),
+  taskStepHints: (taskId: string, stepId: string) =>
+    json<{ hints: Hint[] }>(
+      `/api/tasks/${taskId}/hints?stepId=${encodeURIComponent(stepId)}`,
+    ).then((r) => r.hints),
   auth: () =>
     json<{ providers: AuthProviderStatus[] }>("/api/auth").then((r) => r.providers),
   signOut: (providerId: string) =>

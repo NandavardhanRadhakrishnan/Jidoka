@@ -311,7 +311,8 @@ textarea.input { min-height: 90px; resize: vertical; }
 .artifact { border: 1px solid var(--color-divider); background: var(--color-surface); }
 .artifact .head { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-bottom: 1px solid var(--color-divider); }
 .artifact .key { font-size: 10.5px; color: var(--color-accent-700); }
-.provenance-badge { margin-left: auto; font-size: 9.5px; letter-spacing: 0.04em; text-transform: uppercase; padding: 1px 6px; border-radius: var(--radius-sm, 2px); }
+.artifact-head-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.provenance-badge { font-size: 9.5px; letter-spacing: 0.04em; text-transform: uppercase; padding: 1px 6px; border-radius: var(--radius-sm, 2px); }
 .provenance-badge.provenance-produced { background: var(--color-neutral-900); color: var(--color-bg); }
 .provenance-badge.provenance-note { background: transparent; border: 1px solid var(--color-divider); color: var(--color-neutral-600); }
 .provenance-badge.provenance-unknown { background: var(--color-neutral-200); color: var(--color-neutral-700); }

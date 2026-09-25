@@ -5,7 +5,7 @@ import { validateReferences } from "../rule/builder";
 import { findTaskBySource, getTask, insertTask, listTasks } from "../repo/tasks";
 import { getTaskType, listTaskTypes, mergeTaskType, updateTaskType } from "../repo/taskTypes";
 import { getActiveRule, getRule, insertRule, listRules } from "../repo/rules";
-import { deleteHint, insertHint, listHintsForRule } from "../repo/hints";
+import { deleteHint, insertHint, listHintsForRule, listHintsForStep } from "../repo/hints";
 import {
   activateTypeRule,
   completeTask,
@@ -278,9 +278,23 @@ export function createServer(deps: AppDeps, extraRoutes?: Hono): Hono {
     return c.body(null, 204);
   });
 
+  app.get("/api/tasks/:id/hints", (c) => {
+    const id = c.req.param("id");
+    const task = getTask(deps.db, id);
+    if (!task) return c.json({ error: "unknown task" }, 404);
+    const stepId = c.req.query("stepId");
+    if (!stepId?.trim()) return c.json({ error: "stepId is required" }, 400);
+    if (!task.typeId) return c.json({ error: "task has no type" }, 400);
+    const active = getActiveRule(deps.db, task.typeId);
+    if (!active) return c.json({ error: "no active rule" }, 404);
+    return c.json({ hints: listHintsForStep(deps.db, active.id, stepId.trim()) });
+  });
+
   app.post("/api/tasks/:id/rerun-step", async (c) => {
     const id = c.req.param("id");
-    if (!getTask(deps.db, id)) return c.json({ error: "unknown task" }, 404);
+    const task = getTask(deps.db, id);
+    if (!task) return c.json({ error: "unknown task" }, 404);
+    if (task.state === "done") return c.json({ error: "task is done" }, 409);
     const input = await readJson<{ stepId?: string }>(c);
     if (!input?.stepId?.trim()) return c.json({ error: "stepId is required" }, 400);
     try {
