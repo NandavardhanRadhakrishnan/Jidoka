@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Task } from "../domain/task";
 import { api, type HandoffTarget } from "./api";
 import { Handoff, openUrlTargets } from "./Handoff";
@@ -32,6 +32,152 @@ const INTERNAL_KEYS = new Set([
   "mergedFrom",
   "dedupRationale",
 ]);
+
+const smallGhostBtn = { fontSize: 11, padding: 0 } as const;
+
+function StepOutputActions({
+  taskId,
+  stepId,
+  onChanged,
+}: {
+  taskId: string;
+  stepId: string;
+  onChanged: () => Promise<void>;
+}) {
+  const [hintOpen, setHintOpen] = useState(false);
+  const [hintText, setHintText] = useState("");
+  const [hintExcerpt, setHintExcerpt] = useState<string | undefined>(undefined);
+  const [hintSaved, setHintSaved] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [dependents, setDependents] = useState<{ safe: string[]; unsafe: string[] }>({
+    safe: [],
+    unsafe: [],
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    void api.dependents(taskId, stepId).then((result) => {
+      if (!cancelled) setDependents(result);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [taskId, stepId]);
+
+  function openHintForm() {
+    const selection = window.getSelection()?.toString().trim();
+    if (selection) {
+      setHintText(`> ${selection}\n\n`);
+      setHintExcerpt(selection);
+    } else {
+      setHintText("");
+      setHintExcerpt(undefined);
+    }
+    setHintOpen(true);
+    setHintSaved(false);
+    setActionError(null);
+  }
+
+  async function saveHint() {
+    const text = hintText.trim();
+    if (!text) return;
+    setBusy(true);
+    setActionError(null);
+    try {
+      await api.addTaskHint(taskId, { stepId, text, excerpt: hintExcerpt });
+      setHintOpen(false);
+      setHintSaved(true);
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function rerunPrimary() {
+    setBusy(true);
+    setActionError(null);
+    try {
+      await api.rerunStep(taskId, stepId);
+      await onChanged();
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function rerunWithDependents() {
+    setBusy(true);
+    setActionError(null);
+    try {
+      await api.rerunStep(taskId, stepId);
+      for (const dependentId of dependents.safe) {
+        await api.rerunStep(taskId, dependentId);
+      }
+      await onChanged();
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 6 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
+        {!hintOpen ? (
+          <button type="button" className="btn btn-ghost" style={smallGhostBtn} disabled={busy} onClick={openHintForm}>
+            + hint
+          </button>
+        ) : null}
+        <button type="button" className="btn btn-ghost" style={smallGhostBtn} disabled={busy} onClick={() => void rerunPrimary()}>
+          {busy ? "Re-running…" : "Re-run this step"}
+        </button>
+        {dependents.safe.length > 0 && (
+          <button
+            type="button"
+            className="btn btn-ghost"
+            style={smallGhostBtn}
+            disabled={busy}
+            onClick={() => void rerunWithDependents()}
+          >
+            Also rerun {dependents.safe.length} downstream step(s)
+          </button>
+        )}
+        {dependents.unsafe.length > 0 && (
+          <span style={{ fontSize: 11, color: "var(--color-neutral-700)" }}>
+            also feeds into {dependents.unsafe.length} step(s) not rerun automatically
+          </span>
+        )}
+        {hintSaved && !hintOpen && (
+          <span style={{ fontSize: 11, color: "var(--color-neutral-700)" }}>Saved</span>
+        )}
+      </div>
+      {hintOpen && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <textarea className="input" rows={3} value={hintText} onChange={(e) => setHintText(e.target.value)} />
+          <div style={{ display: "flex", gap: 8 }}>
+            <button type="button" className="btn btn-secondary" disabled={busy || !hintText.trim()} onClick={() => void saveHint()}>
+              Save hint
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              style={smallGhostBtn}
+              disabled={busy}
+              onClick={() => setHintOpen(false)}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+      {actionError && <p className="error-text" style={{ margin: 0 }}>{actionError}</p>}
+    </div>
+  );
+}
 
 export function TaskDetail({
   task,
@@ -78,14 +224,16 @@ export function TaskDetail({
   // step's log entry named it — an assign step's `note:<id>` is pure
   // renderTemplate() substitution, never a model call, so it gets its own label.
   const producedBy = new Map(
-    log.filter((entry) => entry.output && entry.type !== "assign").map((entry) => [entry.output as string, entry.type]),
+    log
+      .filter((entry) => entry.output && entry.type !== "assign")
+      .map((entry) => [entry.output as string, { type: entry.type, stepId: entry.stepId }]),
   );
   function provenanceLabel(key: string): { text: string; kind: "note" | "produced" | "unknown" } {
     if (key.startsWith("note:")) return { text: "note", kind: "note" };
     const producer = producedBy.get(key);
-    if (producer === "ai") return { text: "AI output", kind: "produced" };
-    if (producer === "agent") return { text: "agent output", kind: "produced" };
-    if (producer === "mcp_tool") return { text: "tool output", kind: "produced" };
+    if (producer?.type === "ai") return { text: "AI output", kind: "produced" };
+    if (producer?.type === "agent") return { text: "agent output", kind: "produced" };
+    if (producer?.type === "mcp_tool") return { text: "tool output", kind: "produced" };
     return { text: "context", kind: "unknown" };
   }
 
@@ -201,6 +349,7 @@ export function TaskDetail({
               <h6 style={{ margin: 0 }}>What the rule produced</h6>
               {outputs.map(([key, value]) => {
                 const provenance = provenanceLabel(key);
+                const producer = producedBy.get(key);
                 return (
                   <div key={key} className="artifact">
                     <div className="head">
@@ -208,6 +357,9 @@ export function TaskDetail({
                       <span className={`provenance-badge provenance-${provenance.kind}`}>{provenance.text}</span>
                     </div>
                     <div className="content">{typeof value === "string" ? value : JSON.stringify(value, null, 2)}</div>
+                    {producer && (producer.type === "ai" || producer.type === "agent") && (
+                      <StepOutputActions taskId={task.id} stepId={producer.stepId} onChanged={onChanged} />
+                    )}
                   </div>
                 );
               })}
