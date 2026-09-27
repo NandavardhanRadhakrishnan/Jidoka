@@ -11,6 +11,108 @@ function statusOf(type: TypeWithRules): string {
   return "no rule yet";
 }
 
+/**
+ * "Merge into…" action for a task type: pick another type from a native
+ * `<select>`, then a second click confirms before the destructive call —
+ * folding this type's tasks into the target and deleting it for good.
+ */
+function MergeTypeControl({
+  type,
+  others,
+  onMerged,
+}: {
+  type: TypeWithRules;
+  others: TypeWithRules[];
+  onMerged: () => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [target, setTarget] = useState("");
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  function reset() {
+    setOpen(false);
+    setTarget("");
+    setConfirming(false);
+    setError(null);
+  }
+
+  async function doMerge() {
+    if (!target) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.patchType(type.id, { mergeInto: target });
+      await onMerged();
+      reset();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setConfirming(false);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!open) {
+    return (
+      <button
+        className="btn btn-ghost"
+        style={{ fontSize: 11, padding: 0 }}
+        disabled={others.length === 0}
+        title={others.length === 0 ? "No other type to merge into" : undefined}
+        onClick={() => setOpen(true)}
+      >
+        Merge into…
+      </button>
+    );
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-start" }}>
+      <div className="field" style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+        <label style={{ margin: 0 }}>Merge &ldquo;{type.name}&rdquo; into</label>
+        <select
+          className="input"
+          autoFocus
+          value={target}
+          disabled={busy}
+          onChange={(e) => {
+            setTarget(e.target.value);
+            setConfirming(false);
+          }}
+        >
+          <option value="">Select a type…</option>
+          {others.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.name}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        {!confirming ? (
+          <button className="btn btn-secondary" disabled={!target || busy} onClick={() => setConfirming(true)}>
+            Merge…
+          </button>
+        ) : (
+          <button className="btn btn-primary" disabled={busy} onClick={() => void doMerge()}>
+            {busy ? "Merging…" : "Confirm merge — this can't be undone"}
+          </button>
+        )}
+        <button className="btn btn-ghost" style={{ fontSize: 11, padding: 0 }} disabled={busy} onClick={reset}>
+          Cancel
+        </button>
+      </div>
+      {error && (
+        <p className="error-text" style={{ margin: 0 }}>
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
 /** Full-screen "Types & rules" view — left list of task types, right detail + rule editor for the selected one. */
 export function Rules() {
   const [types, setTypes] = useState<TypeWithRules[]>([]);
@@ -84,6 +186,14 @@ export function Rules() {
           <div className="type-detail-head">
             <h4 style={{ margin: 0 }}>{selected.name}</h4>
             <span className="tag tag-accent">{statusOf(selected)}</span>
+            <span style={{ marginLeft: "auto" }}>
+              <MergeTypeControl
+                key={selected.id}
+                type={selected}
+                others={types.filter((t) => t.id !== selected.id)}
+                onMerged={refresh}
+              />
+            </span>
           </div>
           <p className="type-detail-desc">{selected.description}</p>
           {selected.examples.length > 0 && (
