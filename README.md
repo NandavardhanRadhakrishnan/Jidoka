@@ -32,14 +32,6 @@ export JIDOKA_SAMPLE_DIR=./samples
 bun run dev
 ```
 
-With Outlook:
-
-```bash
-export JIDOKA_OUTLOOK_CLIENT_ID=<azure app registration client id>
-bun src/main.ts login-outlook              # one-time device-code login
-bun run dev
-```
-
 ## Handoff: picking up a task
 
 When a rule assigns a task to a human, it can also say what that person should
@@ -117,8 +109,7 @@ exchanged for tokens (authorization code + PKCE, S256). Tokens are stored in the
 `oauth_tokens` table and refreshed automatically before they expire. The header
 shows each provider's state, with *sign in* / *sign out*.
 
-Configure providers either with the Outlook shortcut (`JIDOKA_OUTLOOK_CLIENT_ID`
-is enough — Microsoft's endpoints are known), or explicitly:
+Configure a provider explicitly:
 
 ```bash
 export JIDOKA_OAUTH_PROVIDERS='[{
@@ -146,7 +137,7 @@ set in the environment. The equivalent `JIDOKA_ANTHROPIC_OAUTH_CLIENT_ID`,
 
 - **Sample folder** — drop a `.json`, `.txt` or `.md` file into `JIDOKA_SAMPLE_DIR`; see `samples/README.md`.
 - **By hand** — the board's **New task** button, or `POST /api/tasks` with `{ "title": ..., "body": ... }`.
-- **Outlook** — polled on the interval once you have logged in.
+- **Extensions** — install a task-source extension (see the Extensions panel in the UI) for anything else, e.g. Outlook, GitHub.
 
 To drive the whole flow by hand — inject, triage, onboard, activate — see
 [`docs/try-it.md`](docs/try-it.md) for curls, or import
@@ -171,8 +162,6 @@ applied live.
 | `JIDOKA_AI_MODEL` | `claude-opus-5` | Model id for the chosen provider |
 | `ANTHROPIC_AUTH_TOKEN` | — | OAuth bearer token, used when no API key is set |
 | `JIDOKA_AI_BASE_URL` | — | Gateway or proxy instead of the provider's own endpoint |
-| `JIDOKA_OUTLOOK_CLIENT_ID` | — | Azure app registration (public client, `Mail.Read`) |
-| `JIDOKA_OUTLOOK_TENANT` | `common` | Azure tenant |
 | `JIDOKA_SAMPLE_DIR` | — | Folder polled by the sample source (e.g. `./samples`) |
 | `JIDOKA_EXTENSIONS_DIR` | `./extensions` | Folder scanned for extension manifests; always on, a missing/empty directory is a no-op |
 | `JIDOKA_TERMINAL` | — | Launcher for handoff commands, `{{command}}` substituted; unset means copy-only |

@@ -26,10 +26,6 @@ export interface Config {
     baseUrl?: string;
     model?: string;
   };
-  outlook: {
-    clientId?: string;
-    tenant: string;
-  };
   /** Folder polled by the sample source; unset disables it. */
   sampleDir?: string;
   /** Folder scanned for extension manifests. Always on — a missing/empty directory is a no-op. */
@@ -75,10 +71,6 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
       baseUrl: env.JIDOKA_AI_BASE_URL ?? (provider === "openai" ? undefined : env.ANTHROPIC_BASE_URL),
       model: env.JIDOKA_AI_MODEL,
     },
-    outlook: {
-      clientId: env.JIDOKA_OUTLOOK_CLIENT_ID,
-      tenant: env.JIDOKA_OUTLOOK_TENANT ?? "common",
-    },
     sampleDir: env.JIDOKA_SAMPLE_DIR,
     extensionsDir: env.JIDOKA_EXTENSIONS_DIR ?? "./extensions",
     terminalCommand: env.JIDOKA_TERMINAL,
@@ -100,10 +92,6 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
     },
     oauth: buildOAuthProviders({
       providersJson: env.JIDOKA_OAUTH_PROVIDERS,
-      outlook: {
-        clientId: env.JIDOKA_OUTLOOK_CLIENT_ID,
-        tenant: env.JIDOKA_OUTLOOK_TENANT ?? "common",
-      },
       anthropic: {
         clientId: env.JIDOKA_ANTHROPIC_OAUTH_CLIENT_ID,
         authorizeUrl: env.JIDOKA_ANTHROPIC_OAUTH_AUTHORIZE_URL,

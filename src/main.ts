@@ -13,18 +13,12 @@ import { discoverExtensions } from "./extensions/discovery";
 import { createInProcessRunner, type AgentRunner } from "./agent/runner";
 import { createAgentSdkRunner } from "./agent/claudeAgentSdk";
 import { withConcurrencyLimit } from "./agent/limit";
-import { onTaskIngested, type AppDeps } from "./orchestrator";
+import { onTaskIngested, onTaskChanged, type AppDeps } from "./orchestrator";
 import { startPoller } from "./sources/poller";
-import { createOutlookSource } from "./sources/outlook/source";
 import { createSampleFolderSource } from "./sources/sample/folder";
 import type { TaskSource } from "./sources/types";
 import { loadEnabledExtensionSources } from "./extensions/runtime";
 import { getSettings } from "./repo/settings";
-import {
-  AuthPendingError,
-  completeDeviceLogin,
-  startDeviceLogin,
-} from "./sources/outlook/auth";
 
 export interface App {
   deps: AppDeps;
@@ -127,103 +121,72 @@ export function createRoutes(app: App) {
   };
 }
 
-async function loginOutlook(config: Config): Promise<void> {
-  const db = openDb(config.dbPath);
-  migrate(db);
-  if (!config.outlook.clientId) throw new Error("JIDOKA_OUTLOOK_CLIENT_ID is not set");
-
-  const deps = { db, clientId: config.outlook.clientId, tenant: config.outlook.tenant };
-  const login = await startDeviceLogin(deps);
-  console.log(`\nOpen ${login.verificationUri} and enter code: ${login.userCode}\n`);
-
-  const deadline = Date.now() + login.expiresIn * 1000;
-  while (Date.now() < deadline) {
-    await Bun.sleep(login.interval * 1000);
-    try {
-      await completeDeviceLogin(deps, login.deviceCode);
-      console.log("Outlook connected.");
-      db.close();
-      return;
-    } catch (error) {
-      if (!(error instanceof AuthPendingError)) throw error;
-    }
-  }
-  throw new Error("device login timed out");
-}
-
 if (import.meta.main) {
   const config = loadConfig();
+  const app = createApp(config);
+  console.log(
+    `AI provider: ${app.config.ai.provider} (${app.config.ai.model ?? "default model"}), ` +
+      `credentials: ${describeCredentials(app.config)}`,
+  );
+  console.log(
+    `Agent steps: ${app.config.agent.runner}` +
+      (app.config.agent.runner === "agent-sdk" ? " (Claude Code CLI login)" : " (AiProvider)") +
+      `, max ${app.config.agent.concurrency} at a time`,
+  );
+  await app.mcp.connectAll(app.config.mcpServers);
 
-  if (Bun.argv[2] === "login-outlook") {
-    await loginOutlook(config);
-  } else {
-    const app = createApp(config);
+  try {
+    const discovered = await discoverExtensions(app.deps.db, app.config.extensionsDir);
     console.log(
-      `AI provider: ${app.config.ai.provider} (${app.config.ai.model ?? "default model"}), ` +
-        `credentials: ${describeCredentials(app.config)}`,
+      `${discovered.valid.length} extension(s) discovered` +
+        (discovered.invalid.length ? ` (${discovered.invalid.length} invalid)` : ""),
     );
-    console.log(
-      `Agent steps: ${app.config.agent.runner}` +
-        (app.config.agent.runner === "agent-sdk" ? " (Claude Code CLI login)" : " (AiProvider)") +
-        `, max ${app.config.agent.concurrency} at a time`,
+  } catch (error) {
+    console.warn(
+      `Extension discovery failed for "${app.config.extensionsDir}": ` +
+        (error instanceof Error ? error.message : String(error)),
     );
-    await app.mcp.connectAll(app.config.mcpServers);
-
-    try {
-      const discovered = await discoverExtensions(app.deps.db, app.config.extensionsDir);
-      console.log(
-        `${discovered.valid.length} extension(s) discovered` +
-          (discovered.invalid.length ? ` (${discovered.invalid.length} invalid)` : ""),
-      );
-    } catch (error) {
-      console.warn(
-        `Extension discovery failed for "${app.config.extensionsDir}": ` +
-          (error instanceof Error ? error.message : String(error)),
-      );
-    }
-
-    const sources: TaskSource[] = [];
-    if (app.config.outlook.clientId) {
-      sources.push(
-        createOutlookSource({
-          db: app.deps.db,
-          clientId: app.config.outlook.clientId,
-          tenant: app.config.outlook.tenant,
-        }),
-      );
-    }
-    if (app.config.sampleDir) {
-      sources.push(createSampleFolderSource({ dir: app.config.sampleDir }));
-      console.log(`Sample source watching ${app.config.sampleDir}`);
-    }
-
-    startPoller(
-      app.deps.db,
-      sources,
-      async (task) => {
-        try {
-          await onTaskIngested(app.deps, task);
-        } catch (error) {
-          console.error(`[orchestrator] task ${task.id} failed:`, error);
-        }
-      },
-      app.config.pollIntervalMs,
-      () => loadEnabledExtensionSources(app.deps.db, app.config.extensionsDir, app.vault),
-    );
-    if (!sources.length) {
-      console.warn(
-        "No static sources configured — set JIDOKA_OUTLOOK_CLIENT_ID or JIDOKA_SAMPLE_DIR, " +
-          "install an extension, or add tasks from the board",
-      );
-    }
-
-    Bun.serve({
-      port: app.config.port,
-      // Model calls keep a request open for a long time with no bytes flowing;
-      // the default idle timeout closes such a connection mid-call.
-      idleTimeout: 255,
-      routes: createRoutes(app),
-    });
-    console.log(`Jidoka on http://localhost:${app.config.port}`);
   }
+
+  const sources: TaskSource[] = [];
+  if (app.config.sampleDir) {
+    sources.push(createSampleFolderSource({ dir: app.config.sampleDir }));
+    console.log(`Sample source watching ${app.config.sampleDir}`);
+  }
+
+  startPoller(
+    app.deps.db,
+    sources,
+    async (task) => {
+      try {
+        await onTaskIngested(app.deps, task);
+      } catch (error) {
+        console.error(`[orchestrator] task ${task.id} failed:`, error);
+      }
+    },
+    app.config.pollIntervalMs,
+    () => loadEnabledExtensionSources(app.deps.db, app.config.extensionsDir, app.vault),
+    async (task, item) => {
+      try {
+        await onTaskChanged(app.deps, task, item);
+      } catch (error) {
+        console.error(`[orchestrator] reopen for task ${task.id} failed:`, error);
+      }
+    },
+  );
+  if (!sources.length) {
+    console.warn(
+      "No static sources configured — set JIDOKA_SAMPLE_DIR, install an extension, " +
+        "or add tasks from the board",
+    );
+  }
+
+  Bun.serve({
+    port: app.config.port,
+    // Model calls keep a request open for a long time with no bytes flowing;
+    // the default idle timeout closes such a connection mid-call.
+    idleTimeout: 255,
+    routes: createRoutes(app),
+  });
+  console.log(`Jidoka on http://localhost:${app.config.port}`);
 }
