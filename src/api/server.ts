@@ -2,6 +2,7 @@ import { Hono, type Context } from "hono";
 import { modelCatalog } from "../ai/models";
 import { RuleDefinitionSchema } from "../domain/rule";
 import { validateReferences } from "../rule/builder";
+import { computeWriteTools } from "../rule/writeTools";
 import { findTaskBySource, getTask, insertTask, listTasks } from "../repo/tasks";
 import { getTaskType, listTaskTypes, mergeTaskType, updateTaskType } from "../repo/taskTypes";
 import { getActiveRule, getRule, insertRule, listRules } from "../repo/rules";
@@ -217,7 +218,34 @@ export function createServer(deps: AppDeps, extraRoutes?: Hono): Hono {
 
   app.post("/api/rules/:id/activate", async (c) => {
     const id = c.req.param("id");
-    if (!getRule(deps.db, id)) return c.json({ error: "unknown rule" }, 404);
+    const rule = getRule(deps.db, id);
+    if (!rule) return c.json({ error: "unknown rule" }, 404);
+
+    // Write-tool grants are approved once, here, at activation — not per call
+    // at runtime — so this is the one place that must be impossible to route
+    // around, from the UI or any other caller.
+    const required = computeWriteTools(rule.definition, deps.mcp.listTools());
+    if (required.length > 0) {
+      const input = await readJson<{ acknowledgedWriteTools?: string[] }>(c);
+      const acknowledged = input?.acknowledgedWriteTools ?? [];
+      const acknowledgedSet = new Set(acknowledged);
+      const requiredSet = new Set(required);
+      const missing = required.filter((tool) => !acknowledgedSet.has(tool));
+      const extra = acknowledged.filter((tool) => !requiredSet.has(tool));
+      if (missing.length || extra.length) {
+        return c.json(
+          {
+            error:
+              "acknowledgedWriteTools must exactly match this rule's write tools before it can be activated",
+            required,
+            ...(missing.length ? { missing } : {}),
+            ...(extra.length ? { extra } : {}),
+          },
+          400,
+        );
+      }
+    }
+
     // Waiting tasks are processed after the response; the board shows them move.
     return c.json({ rule: await activateTypeRule(deps, id, { background: true }) });
   });

@@ -178,10 +178,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ description }),
     }).then((r) => r.rule),
-  activate: (ruleId: string) =>
-    json<{ rule: Rule }>(`/api/rules/${ruleId}/activate`, { method: "POST" }).then(
-      (r) => r.rule,
-    ),
+  activate: (ruleId: string, acknowledgedWriteTools: string[] = []) =>
+    json<{ rule: Rule }>(`/api/rules/${ruleId}/activate`, {
+      method: "POST",
+      body: JSON.stringify({ acknowledgedWriteTools }),
+    }).then((r) => r.rule),
   extensions: () => json<{ extensions: ExtensionListItem[] }>("/api/extensions").then((r) => r.extensions),
   rescanExtensions: () =>
     json<{ discovered: { valid: string[]; invalid: { id: string; error: string }[] } }>(

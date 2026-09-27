@@ -24,12 +24,13 @@ import { checkForDuplicate } from "./dedup/dedup";
 import {
   runRule,
   rerunStep as rerunRuleStep,
+  type ResolvedAgentTask,
   type ResolvedHandoffTarget,
   type StepLogEntry,
   type ToolCaller,
 } from "./rule/executor";
 import { findDependentSteps } from "./rule/dependents";
-import type { AgentRunner } from "./agent/runner";
+import { createInProcessRunner, type AgentRunner } from "./agent/runner";
 import { buildRule } from "./rule/builder";
 import { listHintsForRule, listHintsForStep } from "./repo/hints";
 import type { RawItem } from "./sources/types";
@@ -186,7 +187,7 @@ export async function runRuleForTask(
   try {
     const result = await runRule(executorDepsForRule(deps, active), active.definition, running);
 
-    return updateTask(deps.db, task.id, {
+    const updated = updateTask(deps.db, task.id, {
       context: {
         ...result.context,
         ruleLog: result.log,
@@ -195,11 +196,76 @@ export async function runRuleForTask(
       assignee: result.assignee,
       state: result.assignee === "ai" ? "assigned_ai" : "assigned_human",
     });
+
+    // An agent step can run for minutes, so this — like triage and rule
+    // activation elsewhere in this file — fires in the background rather
+    // than holding up whatever caller is waiting on the rule run itself.
+    if (updated.state === "assigned_ai" && result.agentTask) {
+      void completeAiAssignedTask(deps, updated, result.agentTask).catch((error) => {
+        console.error(`[orchestrator] AI completion for task ${updated.id} failed:`, error);
+      });
+    }
+
+    return updated;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return updateTask(deps.db, task.id, {
       state: "failed",
       context: { ...running.context, error: message },
+    });
+  }
+}
+
+/**
+ * The worker for `assigned_ai`: runs the rule's resolved agent task and
+ * closes the loop the same way a human closing a task does — `done` with a
+ * completion note on success (so TaskDetail's existing rendering needs no
+ * changes), `failed` with `context.error` on failure (the same shape a
+ * failing rule run already uses in `runRuleForTask`).
+ */
+async function completeAiAssignedTask(
+  deps: AppDeps,
+  task: Task,
+  agentTask: ResolvedAgentTask,
+): Promise<void> {
+  const runner =
+    deps.runAgent ??
+    createInProcessRunner({
+      provider: deps.provider,
+      listTools: () => deps.mcp.listTools(),
+      callTool: deps.mcp.callTool,
+    });
+
+  try {
+    const result = await runner.run({
+      prompt: agentTask.prompt,
+      allowedTools: agentTask.tools,
+      maxTurns: agentTask.maxIterations,
+      ...(agentTask.model ? { model: agentTask.model } : {}),
+    });
+
+    const current = getTask(deps.db, task.id);
+    // The run can take as long as maxIterations allows; if the task moved on
+    // to something else in the meantime (a human closed it by hand, a merge,
+    // a reopen from the source), this background write must not clobber that
+    // — the same hazard mergeTasks already guards against for a concurrent
+    // rule run.
+    if (!current || current.state !== "assigned_ai") return;
+    updateTask(deps.db, task.id, {
+      state: "done",
+      context: {
+        ...current.context,
+        completedAt: new Date().toISOString(),
+        ...(result.text.trim() ? { completionNote: result.text.trim() } : {}),
+      },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const current = getTask(deps.db, task.id);
+    if (!current || current.state !== "assigned_ai") return;
+    updateTask(deps.db, task.id, {
+      state: "failed",
+      context: { ...current.context, error: message },
     });
   }
 }

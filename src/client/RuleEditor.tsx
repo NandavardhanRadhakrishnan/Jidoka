@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import type { RuleDefinition, RuleStep } from "../domain/rule";
 import type { ToolSpec } from "../ai/provider";
+import { computeWriteTools } from "../rule/writeTools";
+import { splitToolName } from "../mcp/names";
 import { api, type Hint, type ModelOption, type Rule, type TypeWithRules } from "./api";
 import { StepList } from "./StepList";
 import { RuleFlow } from "./RuleFlow";
@@ -65,8 +67,16 @@ export function RuleEditor({
   const [view, setView] = useState<"flow" | "editor">("flow");
   const [hints, setHints] = useState<Hint[]>([]);
   const [reconciliation, setReconciliation] = useState<ReconciliationState | null>(null);
+  const [ackWriteTools, setAckWriteTools] = useState(false);
 
   const ruleIdForHints = draftId ?? initialRule?.id ?? null;
+  const writeTools = definition ? computeWriteTools(definition, tools) : [];
+
+  // Any change to the draft — a fresh build, a saved version, a hand edit —
+  // requires a fresh look at what it can write before it can be activated.
+  useEffect(() => {
+    setAckWriteTools(false);
+  }, [definition]);
 
   const loadHints = useCallback(async (ruleId: string) => {
     setHints(await api.ruleHints(ruleId));
@@ -159,7 +169,7 @@ export function RuleEditor({
     setBusy(true);
     setError(null);
     try {
-      await api.activate(draftId);
+      await api.activate(draftId, writeTools);
       await onSaved();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -302,12 +312,45 @@ export function RuleEditor({
             </section>
           )}
 
+          {draftId && writeTools.length > 0 && (
+            <label
+              className="field"
+              style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer" }}
+            >
+              <input
+                type="checkbox"
+                checked={ackWriteTools}
+                onChange={(e) => setAckWriteTools(e.target.checked)}
+                style={{ marginTop: 3 }}
+              />
+              <span style={{ fontSize: 13 }}>
+                I&apos;ve reviewed the write actions this rule can take:
+                <span style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 4 }}>
+                  {writeTools.map((name) => (
+                    <span
+                      key={name}
+                      className="tag tag-outline mono"
+                      style={{ fontSize: 10, display: "inline-flex", alignItems: "center", gap: 4 }}
+                    >
+                      {splitToolName(name).tool}
+                      <span className="perm-badge perm-write">write</span>
+                    </span>
+                  ))}
+                </span>
+              </span>
+            </label>
+          )}
+
           <div style={{ display: "flex", gap: 8 }}>
             <button className="btn btn-secondary" disabled={busy} onClick={saveAsNewVersion}>
               Save as new version
             </button>
             {draftId && (
-              <button className="btn btn-primary" disabled={busy} onClick={activate}>
+              <button
+                className="btn btn-primary"
+                disabled={busy || (writeTools.length > 0 && !ackWriteTools)}
+                onClick={activate}
+              >
                 Activate
               </button>
             )}
