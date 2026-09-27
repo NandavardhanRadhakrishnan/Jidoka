@@ -18,6 +18,7 @@ import {
   markDuplicate,
   rerunStep,
   getDependents,
+  retriageOpenTasksForType,
   type AppDeps,
 } from "../orchestrator";
 
@@ -170,7 +171,8 @@ export function createServer(deps: AppDeps, extraRoutes?: Hono): Hono {
 
   app.patch("/api/types/:id", async (c) => {
     const id = c.req.param("id");
-    if (!getTaskType(deps.db, id)) return c.json({ error: "unknown type" }, 404);
+    const current = getTaskType(deps.db, id);
+    if (!current) return c.json({ error: "unknown type" }, 404);
     const patch = await readJson<{
       name?: string;
       description?: string;
@@ -182,7 +184,22 @@ export function createServer(deps: AppDeps, extraRoutes?: Hono): Hono {
       mergeTaskType(deps.db, id, patch.mergeInto);
       return c.json({ merged: true });
     }
-    return c.json({ type: updateTaskType(deps.db, id, patch) });
+
+    // Only an actual description edit changes what triage classifies
+    // against — a pure rename doesn't affect any task's classification, so
+    // it never triggers a re-triage pass. See docs/superpowers/specs/
+    // 2026-09-27-retriage-on-type-change-design.md.
+    const descriptionChanged =
+      typeof patch.description === "string" && patch.description !== current.description;
+    const updated = updateTaskType(deps.db, id, patch);
+    if (descriptionChanged) {
+      // Can take seconds per open task (a real AI call each) — respond now
+      // and let the board poll for tasks moving, same as ingestion.
+      void retriageOpenTasksForType(deps, id).catch((error) => {
+        console.error(`[api] re-triage for type ${id} failed:`, error);
+      });
+    }
+    return c.json({ type: updated });
   });
 
   app.post("/api/types/:id/onboard", async (c) => {

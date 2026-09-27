@@ -771,3 +771,76 @@ test("GET /api/tasks/:id/dependents returns safe and unsafe step ids", async () 
     (await fetch(new Request("http://localhost/api/tasks/ghost/dependents?stepId=a"))).status,
   ).toBe(404);
 });
+
+test("PATCH /api/types/:id: a pure rename triggers no re-triage", async () => {
+  const { deps, fetch } = app([]); // zero replies queued — any AI call would fail the test
+  const type = insertTaskType(deps.db, { name: "Customer email", description: "An external question" });
+  const task = updateTask(deps.db, insertTask(deps.db, { sourceId: "s", externalId: "e", title: "T", body: "b" }).id, {
+    typeId: type.id,
+    state: "assigned_human",
+    assignee: "human",
+  });
+
+  const response = await fetch(
+    new Request(`http://localhost/api/types/${type.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Customer emails" }),
+    }),
+  );
+
+  expect(response.status).toBe(200);
+  const body = (await response.json()) as { type: { name: string } };
+  expect(body.type.name).toBe("Customer emails");
+
+  await Bun.sleep(10);
+  expect(getTask(deps.db, task.id)?.state).toBe("assigned_human");
+});
+
+test("PATCH /api/types/:id: a description change re-triages open tasks in the background, skipping done ones", async () => {
+  const db = openDb(":memory:");
+  migrate(db);
+  const type = insertTaskType(db, { name: "Customer email", description: "An external question" });
+  const otherType = insertTaskType(db, { name: "Internal request", description: "Internal-only" });
+  const openTask = updateTask(db, insertTask(db, { sourceId: "s", externalId: "open", title: "T1", body: "b" }).id, {
+    typeId: type.id,
+    state: "assigned_human",
+    assignee: "human",
+  });
+  const doneTask = updateTask(db, insertTask(db, { sourceId: "s", externalId: "done", title: "T2", body: "b" }).id, {
+    typeId: type.id,
+    state: "done",
+  });
+
+  const provider: AiProvider = {
+    id: "stub",
+    async complete() {
+      return {
+        text: JSON.stringify({ scores: [{ typeId: otherType.id, confidence: 0.9 }], proposal: null }),
+        toolCalls: [],
+      };
+    },
+  };
+  const deps: AppDeps = {
+    db,
+    provider,
+    modelProvider: "anthropic",
+    mcp: { listTools: () => [], callTool: async () => "" },
+  };
+  const server = createServer(deps);
+
+  const response = await server.fetch(
+    new Request(`http://localhost/api/types/${type.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ description: "A question from a paying customer, not staff" }),
+    }),
+  );
+
+  expect(response.status).toBe(200);
+  await Bun.sleep(10);
+
+  expect(getTask(db, openTask.id)?.typeId).toBe(otherType.id);
+  expect(getTask(db, doneTask.id)?.typeId).toBe(type.id);
+  expect(getTask(db, doneTask.id)?.state).toBe("done");
+});
