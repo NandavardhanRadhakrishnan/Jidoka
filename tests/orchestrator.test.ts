@@ -21,6 +21,7 @@ import {
 } from "../src/orchestrator";
 import { insertHint } from "../src/repo/hints";
 import type { AiProvider } from "../src/ai/provider";
+import type { AgentRunInput, AgentRunner } from "../src/agent/runner";
 
 function freshDb() {
   const db = openDb(":memory:");
@@ -820,4 +821,169 @@ test("getDependents respects ranStepIds from ruleLog", () => {
   });
 
   expect(getDependents(app, taskId, "a")).toEqual({ safe: ["b"], unsafe: [] });
+});
+
+test("a task assigned to ai with an agentTask runs it and lands in done with the result as the completion note", async () => {
+  const db = freshDb();
+  const type = insertTaskType(db, { name: "Customer email", description: "d" });
+  activateRule(
+    db,
+    insertRule(db, {
+      typeId: type.id,
+      definition: {
+        steps: [
+          {
+            id: "s1",
+            type: "assign",
+            to: "ai",
+            agentTask: { prompt: "Resolve {{task.title}}", tools: [], maxIterations: 2 },
+          },
+        ],
+      },
+    }).id,
+  );
+  const task = insertTask(db, sample);
+  const runCalls: AgentRunInput[] = [];
+  const runAgent: AgentRunner = {
+    id: "stub",
+    async run(input) {
+      runCalls.push(input);
+      return { text: "Order 42 shipped yesterday.", toolCalls: [] };
+    },
+  };
+  const app: AppDeps = {
+    ...deps(db, [JSON.stringify({ scores: [{ typeId: type.id, confidence: 0.95 }], proposal: null })]),
+    runAgent,
+  };
+
+  const result = await onTaskIngested(app, task);
+  expect(result.state).toBe("assigned_ai");
+  expect(result.assignee).toBe("ai");
+
+  await Bun.sleep(10);
+
+  const finished = getTask(db, task.id)!;
+  expect(finished.state).toBe("done");
+  expect(finished.context.completionNote).toBe("Order 42 shipped yesterday.");
+  expect(runCalls[0]?.prompt).toBe("Resolve Where is my order?");
+  expect(runCalls[0]?.allowedTools).toEqual([]);
+  expect(runCalls[0]?.maxTurns).toBe(2);
+});
+
+test("an assign-to-ai step with no agentTask still gets picked up, via the default fallback", async () => {
+  const db = freshDb();
+  const type = insertTaskType(db, { name: "Customer email", description: "d" });
+  activateRule(
+    db,
+    insertRule(db, {
+      typeId: type.id,
+      definition: { steps: [{ id: "s1", type: "assign", to: "ai" }] },
+    }).id,
+  );
+  const task = insertTask(db, sample);
+  const runCalls: AgentRunInput[] = [];
+  const runAgent: AgentRunner = {
+    id: "stub",
+    async run(input) {
+      runCalls.push(input);
+      return { text: "Handled.", toolCalls: [] };
+    },
+  };
+  const app: AppDeps = {
+    ...deps(db, [JSON.stringify({ scores: [{ typeId: type.id, confidence: 0.95 }], proposal: null })]),
+    runAgent,
+  };
+
+  await onTaskIngested(app, task);
+  await Bun.sleep(10);
+
+  expect(runCalls[0]?.allowedTools).toEqual([]);
+  const finished = getTask(db, task.id)!;
+  expect(finished.state).toBe("done");
+});
+
+test("a failing ai-assigned agent run leaves the task failed with the error recorded", async () => {
+  const db = freshDb();
+  const type = insertTaskType(db, { name: "Customer email", description: "d" });
+  activateRule(
+    db,
+    insertRule(db, {
+      typeId: type.id,
+      definition: {
+        steps: [
+          {
+            id: "s1",
+            type: "assign",
+            to: "ai",
+            agentTask: { prompt: "Resolve it", tools: [], maxIterations: 6 },
+          },
+        ],
+      },
+    }).id,
+  );
+  const task = insertTask(db, sample);
+  const runAgent: AgentRunner = {
+    id: "stub",
+    async run() {
+      throw new Error("agent sdk crashed");
+    },
+  };
+  const app: AppDeps = {
+    ...deps(db, [JSON.stringify({ scores: [{ typeId: type.id, confidence: 0.95 }], proposal: null })]),
+    runAgent,
+  };
+
+  const result = await onTaskIngested(app, task);
+  expect(result.state).toBe("assigned_ai");
+
+  await Bun.sleep(10);
+
+  const finished = getTask(db, task.id)!;
+  expect(finished.state).toBe("failed");
+  expect(String(finished.context.error)).toContain("agent sdk crashed");
+});
+
+test("an ai-assigned task closed by something else while the run is in flight is not clobbered on completion", async () => {
+  const db = freshDb();
+  const type = insertTaskType(db, { name: "Customer email", description: "d" });
+  activateRule(
+    db,
+    insertRule(db, {
+      typeId: type.id,
+      definition: {
+        steps: [
+          {
+            id: "s1",
+            type: "assign",
+            to: "ai",
+            agentTask: { prompt: "Resolve it", tools: [], maxIterations: 6 },
+          },
+        ],
+      },
+    }).id,
+  );
+  const task = insertTask(db, sample);
+  const runAgent: AgentRunner = {
+    id: "stub",
+    async run() {
+      // Simulate a human closing the task by hand (or a merge/reopen) while
+      // this run is still in flight, before the worker's own completion write.
+      updateTask(db, task.id, {
+        state: "done",
+        context: { completedAt: "manual", completionNote: "closed by a human mid-run" },
+      });
+      return { text: "AI would have said this.", toolCalls: [] };
+    },
+  };
+  const app: AppDeps = {
+    ...deps(db, [JSON.stringify({ scores: [{ typeId: type.id, confidence: 0.95 }], proposal: null })]),
+    runAgent,
+  };
+
+  await onTaskIngested(app, task);
+  await Bun.sleep(10);
+
+  const finished = getTask(db, task.id)!;
+  expect(finished.state).toBe("done");
+  expect(finished.context.completionNote).toBe("closed by a human mid-run");
 });

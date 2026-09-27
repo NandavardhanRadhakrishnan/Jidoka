@@ -675,3 +675,67 @@ test("rerunStep throws when the step id does not exist", async () => {
     ),
   ).rejects.toThrow(/missing/i);
 });
+
+test("an assign-to-ai step with an explicit agentTask renders its prompt and is returned resolved", async () => {
+  const definition = RuleDefinitionSchema.parse({
+    steps: [
+      {
+        id: "s1",
+        type: "assign",
+        to: "ai",
+        agentTask: {
+          prompt: "Resolve {{task.title}} using {{context.summary}}",
+          tools: ["files__write_file"],
+          maxIterations: 4,
+          model: "haiku",
+        },
+      },
+    ],
+  });
+
+  const result = await runRule(
+    { provider: scriptedProvider([]), callTool: noTools, loadRule: noRules },
+    definition,
+    { ...task, context: { summary: "prior summary" } },
+  );
+
+  expect(result.assignee).toBe("ai");
+  expect(result.agentTask).toEqual({
+    prompt: "Resolve Where is my order? using prior summary",
+    tools: ["files__write_file"],
+    maxIterations: 4,
+    model: "haiku",
+  });
+});
+
+test("an assign-to-ai step with no agentTask falls back to a title/body prompt, no tools, a low cap", async () => {
+  const definition = RuleDefinitionSchema.parse({
+    steps: [{ id: "s1", type: "assign", to: "ai" }],
+  });
+
+  const result = await runRule(
+    { provider: scriptedProvider([]), callTool: noTools, loadRule: noRules },
+    definition,
+    task,
+  );
+
+  expect(result.assignee).toBe("ai");
+  expect(result.agentTask?.tools).toEqual([]);
+  expect(result.agentTask?.maxIterations).toBeLessThanOrEqual(3);
+  expect(result.agentTask?.prompt).toContain("Where is my order?");
+  expect(result.agentTask?.prompt).toContain("I ordered last week.");
+});
+
+test("an assign-to-human step never sets agentTask", async () => {
+  const definition = RuleDefinitionSchema.parse({
+    steps: [{ id: "s1", type: "assign", to: "human" }],
+  });
+
+  const result = await runRule(
+    { provider: scriptedProvider([]), callTool: noTools, loadRule: noRules },
+    definition,
+    task,
+  );
+
+  expect(result.agentTask).toBeUndefined();
+});

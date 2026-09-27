@@ -1,6 +1,6 @@
 import type { AiProvider, ToolSpec } from "../ai/provider";
 import type { Assignee, Task } from "../domain/task";
-import type { HandoffTarget, RuleDefinition, RuleStep } from "../domain/rule";
+import type { AgentTaskSpec, HandoffTarget, RuleDefinition, RuleStep } from "../domain/rule";
 import { createInProcessRunner, type AgentRunner } from "../agent/runner";
 import { renderInput, renderTemplate, type TemplateScope } from "./template";
 
@@ -44,6 +44,37 @@ export interface RunResult {
   log: StepLogEntry[];
   /** What a human should have open when they pick this task up. */
   handoff?: ResolvedHandoffTarget[];
+  /** What the AI should do; set only when the rule assigned to "ai". */
+  agentTask?: ResolvedAgentTask;
+}
+
+/** An `agentTask` with its prompt template already filled in. */
+export interface ResolvedAgentTask {
+  prompt: string;
+  tools: string[];
+  maxIterations: number;
+  model?: string;
+}
+
+/**
+ * The fallback used when a rule assigns to AI without describing the work: the
+ * task's own title and body, no tools, a low iteration cap — a safe default
+ * that also never grants anything Part 1's write-tool gate needs to check.
+ */
+const DEFAULT_AGENT_TASK: AgentTaskSpec = {
+  prompt: "Complete this task.\n\nTitle: {{task.title}}\n\nDetails:\n{{task.body}}",
+  tools: [],
+  maxIterations: 3,
+};
+
+function resolveAgentTask(spec: AgentTaskSpec | undefined, scope: TemplateScope): ResolvedAgentTask {
+  const source = spec ?? DEFAULT_AGENT_TASK;
+  return {
+    prompt: renderTemplate(source.prompt, scope),
+    tools: source.tools,
+    maxIterations: source.maxIterations,
+    ...(source.model ? { model: source.model } : {}),
+  };
 }
 
 /** A handoff target with its templates filled in. */
@@ -100,6 +131,7 @@ interface RunState {
   log: StepLogEntry[];
   stack: string[];
   handoff?: ResolvedHandoffTarget[];
+  agentTask?: ResolvedAgentTask;
 }
 
 function scopeFor(task: Task, state: RunState): TemplateScope {
@@ -284,6 +316,7 @@ async function runSteps(
         state.assignee = step.to;
         if (step.note) state.context[`note:${step.id}`] = renderTemplate(step.note, scope);
         if (step.open?.length) state.handoff = resolveHandoff(step.open, scope);
+        if (step.to === "ai") state.agentTask = resolveAgentTask(step.agentTask, scope);
         state.log.push({ stepId: step.id, type: step.type });
         break;
       }
@@ -335,5 +368,6 @@ export async function runRule(
     assignee: state.assignee,
     log: state.log,
     ...(state.handoff ? { handoff: state.handoff } : {}),
+    ...(state.agentTask ? { agentTask: state.agentTask } : {}),
   };
 }

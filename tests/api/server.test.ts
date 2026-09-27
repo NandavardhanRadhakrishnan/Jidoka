@@ -6,9 +6,12 @@ import { insertRule, activateRule } from "../../src/repo/rules";
 import { insertHint, listHintsForRule, listHintsForStep } from "../../src/repo/hints";
 import { createServer } from "../../src/api/server";
 import type { AppDeps } from "../../src/orchestrator";
-import type { AiProvider } from "../../src/ai/provider";
+import type { AiProvider, ToolSpec } from "../../src/ai/provider";
 
-function app(replies: string[] = []): { deps: AppDeps; fetch: (req: Request) => Promise<Response> } {
+function app(
+  replies: string[] = [],
+  tools: ToolSpec[] = [],
+): { deps: AppDeps; fetch: (req: Request) => Promise<Response> } {
   const db = openDb(":memory:");
   migrate(db);
   let i = 0;
@@ -22,7 +25,7 @@ function app(replies: string[] = []): { deps: AppDeps; fetch: (req: Request) => 
     db,
     provider,
     modelProvider: "anthropic",
-    mcp: { listTools: () => [], callTool: async () => "" },
+    mcp: { listTools: () => tools, callTool: async () => "" },
   };
   const server = createServer(deps);
   return { deps, fetch: async (req) => server.fetch(req) };
@@ -248,6 +251,120 @@ test("POST /api/types/:id/onboard builds a draft rule and activate publishes it"
 
   // Waiting tasks are processed after the response, so the route must not block.
   await Bun.sleep(10);
+});
+
+test("activating a rule with write tools rejects activation until the exact set is acknowledged", async () => {
+  const writeTool: ToolSpec = {
+    name: "files__write_file",
+    description: "",
+    inputSchema: {},
+    annotations: { readOnlyHint: false },
+  };
+  const { deps, fetch } = app([], [writeTool]);
+  const type = insertTaskType(deps.db, { name: "Customer email", description: "d" });
+  const draft = insertRule(deps.db, {
+    typeId: type.id,
+    definition: {
+      steps: [
+        {
+          id: "s1",
+          type: "agent",
+          prompt: "p",
+          tools: ["files__write_file"],
+          maxIterations: 6,
+          output: "o",
+        },
+        { id: "s2", type: "assign", to: "human" },
+      ],
+    },
+  });
+
+  const noBody = await fetch(
+    new Request(`http://localhost/api/rules/${draft.id}/activate`, { method: "POST" }),
+  );
+  expect(noBody.status).toBe(400);
+  const noBodyJson = (await noBody.json()) as { missing?: string[] };
+  expect(noBodyJson.missing).toEqual(["files__write_file"]);
+
+  const wrongAck = await fetch(
+    new Request(`http://localhost/api/rules/${draft.id}/activate`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ acknowledgedWriteTools: ["files__some_other_tool"] }),
+    }),
+  );
+  expect(wrongAck.status).toBe(400);
+  const wrongAckJson = (await wrongAck.json()) as { missing?: string[]; extra?: string[] };
+  expect(wrongAckJson.missing).toEqual(["files__write_file"]);
+  expect(wrongAckJson.extra).toEqual(["files__some_other_tool"]);
+
+  const correct = await fetch(
+    new Request(`http://localhost/api/rules/${draft.id}/activate`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ acknowledgedWriteTools: ["files__write_file"] }),
+    }),
+  );
+  expect(correct.status).toBe(200);
+  const correctJson = (await correct.json()) as { rule: { status: string } };
+  expect(correctJson.rule.status).toBe("active");
+});
+
+test("an assign-to-ai step's agentTask tools also require acknowledgment to activate", async () => {
+  const writeTool: ToolSpec = {
+    name: "files__write_file",
+    description: "",
+    inputSchema: {},
+    annotations: { readOnlyHint: false },
+  };
+  const { deps, fetch } = app([], [writeTool]);
+  const type = insertTaskType(deps.db, { name: "Customer email", description: "d" });
+  const draft = insertRule(deps.db, {
+    typeId: type.id,
+    definition: {
+      steps: [
+        {
+          id: "s1",
+          type: "assign",
+          to: "ai",
+          agentTask: { prompt: "p", tools: ["files__write_file"], maxIterations: 6 },
+        },
+      ],
+    },
+  });
+
+  const missingAck = await fetch(
+    new Request(`http://localhost/api/rules/${draft.id}/activate`, { method: "POST" }),
+  );
+  expect(missingAck.status).toBe(400);
+
+  const ok = await fetch(
+    new Request(`http://localhost/api/rules/${draft.id}/activate`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ acknowledgedWriteTools: ["files__write_file"] }),
+    }),
+  );
+  expect(ok.status).toBe(200);
+});
+
+test("activating a rule with no write tools needs no acknowledgment at all", async () => {
+  const { deps, fetch } = app();
+  const type = insertTaskType(deps.db, { name: "Customer email", description: "d" });
+  const draft = insertRule(deps.db, {
+    typeId: type.id,
+    definition: {
+      steps: [
+        { id: "s1", type: "ai", prompt: "p", output: "o" },
+        { id: "s2", type: "assign", to: "human" },
+      ],
+    },
+  });
+
+  const response = await fetch(
+    new Request(`http://localhost/api/rules/${draft.id}/activate`, { method: "POST" }),
+  );
+  expect(response.status).toBe(200);
 });
 
 test("a request for an unknown task returns 404", async () => {

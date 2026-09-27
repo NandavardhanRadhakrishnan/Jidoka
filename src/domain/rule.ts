@@ -63,6 +63,23 @@ export const HandoffTargetSchema = z.discriminatedUnion("kind", [
 
 export type HandoffTarget = z.infer<typeof HandoffTargetSchema>;
 
+/**
+ * What the AI should do to complete a task assigned to it. Deliberately not
+ * `AgentStep` reused verbatim: an assign step's AI work is terminal (nothing
+ * downstream in the rule reads its output), so it only needs the fields that
+ * actually transfer to that machinery — not `id`/`output`/`resumeSessionFrom`,
+ * which exist for a step other steps can address mid-rule.
+ */
+const AgentTaskSpec = z.object({
+  prompt: z.string(),
+  tools: z.array(z.string()).default([]),
+  maxIterations: z.number().int().min(1).max(20).default(6),
+  /** Catalog id from src/ai/models.ts. Unset falls back to config.agent.model. */
+  model: z.string().optional(),
+});
+
+export type AgentTaskSpec = z.infer<typeof AgentTaskSpec>;
+
 const AssignStep = z.object({
   id: z.string(),
   type: z.literal("assign"),
@@ -70,6 +87,12 @@ const AssignStep = z.object({
   note: z.string().optional(),
   /** Handoff targets; only meaningful when assigning to a human. */
   open: z.array(HandoffTargetSchema).optional(),
+  /**
+   * What the AI should do; only meaningful when `to === "ai"`. Unset falls
+   * back to a default: the task's title and body as the prompt, no tools,
+   * a low iteration cap.
+   */
+  agentTask: AgentTaskSpec.optional(),
 });
 
 const CallRuleStep = z.object({
