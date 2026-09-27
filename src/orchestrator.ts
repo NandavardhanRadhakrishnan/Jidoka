@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite";
 import type { AiProvider, ToolSpec } from "./ai/provider";
 import type { ModelProviderId } from "./ai/models";
 import { modelCatalog } from "./ai/models";
-import type { Assignee, Task } from "./domain/task";
+import type { Assignee, Task, TaskState } from "./domain/task";
 import type { Rule } from "./domain/rule";
 import { getTask, listTasks, updateTask, deleteTask } from "./repo/tasks";
 import { recordMergedSourceItem } from "./repo/mergedSourceItems";
@@ -19,7 +19,7 @@ import {
   insertRule,
   listRules,
 } from "./repo/rules";
-import { triageTask } from "./triage/triage";
+import { triageTask, type TriageResult } from "./triage/triage";
 import { checkForDuplicate } from "./dedup/dedup";
 import {
   runRule,
@@ -80,8 +80,12 @@ export async function onTaskIngested(deps: AppDeps, task: Task): Promise<Task> {
   return triageAndAssign(deps, task);
 }
 
-async function triageAndAssign(deps: AppDeps, task: Task): Promise<Task> {
-  const { outcome, deadline } = await triageTask(deps.provider, task, listTaskTypes(deps.db));
+/** Applies a fresh `triageTask` outcome to a task, unconditionally — used both
+ *  for a brand new task (which has no prior classification to compare against)
+ *  and, via `retriageTask` below, for an already-classified one whose triage
+ *  outcome turned out to differ from what it already had. */
+async function applyTriageOutcome(deps: AppDeps, task: Task, result: TriageResult): Promise<Task> {
+  const { outcome, deadline } = result;
 
   if (outcome.kind === "ambiguous") {
     return updateTask(deps.db, task.id, {
@@ -110,6 +114,52 @@ async function triageAndAssign(deps: AppDeps, task: Task): Promise<Task> {
     deadline,
   });
   return processTask(deps, matched);
+}
+
+async function triageAndAssign(deps: AppDeps, task: Task): Promise<Task> {
+  const result = await triageTask(deps.provider, task, listTaskTypes(deps.db));
+  return applyTriageOutcome(deps, task, result);
+}
+
+/** Re-runs real triage for a task that was already classified once, e.g.
+ *  because its type's description changed. Unlike `triageAndAssign`, a
+ *  `matched` outcome that confirms the task's *current* type is a deliberate
+ *  no-op: re-triage is meant to catch drift, not to force every open task
+ *  under a type through a fresh rule run whenever its description is edited. */
+export async function retriageTask(deps: AppDeps, task: Task): Promise<Task> {
+  const result = await triageTask(deps.provider, task, listTaskTypes(deps.db));
+  if (result.outcome.kind === "matched" && result.outcome.typeId === task.typeId) {
+    return task;
+  }
+  return applyTriageOutcome(deps, task, result);
+}
+
+/** States a task can still move out of; `done` is terminal (per CLAUDE.md,
+ *  "completed tasks keep their original type") and `processing` is skipped so
+ *  a concurrent re-triage never races the whole-context write a running
+ *  rule makes when it finishes (the same hazard `mergeTasks` already guards
+ *  against for a single task). */
+const OPEN_FOR_RETRIAGE = new Set<TaskState>([
+  "ingested",
+  "needs_type_confirmation",
+  "needs_onboarding",
+  "needs_dedup_confirmation",
+  "assigned_ai",
+  "assigned_human",
+  "failed",
+]);
+
+/** Runs when a type's description changes: only its *open* tasks are
+ *  reconsidered (see `OPEN_FOR_RETRIAGE`). A merge or a pure rename never
+ *  reaches this function — see `docs/superpowers/specs/2026-09-27-retriage-on-type-change-design.md`
+ *  for why those two don't need a real triage call. */
+export async function retriageOpenTasksForType(deps: AppDeps, typeId: string): Promise<void> {
+  const targets = listTasks(deps.db).filter(
+    (t) => t.typeId === typeId && OPEN_FOR_RETRIAGE.has(t.state),
+  );
+  for (const task of targets) {
+    await retriageTask(deps, task);
+  }
 }
 
 async function processTask(deps: AppDeps, task: Task): Promise<Task> {

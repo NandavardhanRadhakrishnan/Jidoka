@@ -17,6 +17,8 @@ import {
   runRuleForTask,
   rerunStep,
   getDependents,
+  retriageTask,
+  retriageOpenTasksForType,
   type AppDeps,
 } from "../src/orchestrator";
 import { insertHint } from "../src/repo/hints";
@@ -820,4 +822,136 @@ test("getDependents respects ranStepIds from ruleLog", () => {
   });
 
   expect(getDependents(app, taskId, "a")).toEqual({ safe: ["b"], unsafe: [] });
+});
+
+test("retriageTask is a no-op when triage confirms the task's current type", async () => {
+  const db = freshDb();
+  const type = insertTaskType(db, { name: "Customer email", description: "d" });
+  const task = updateTask(db, insertTask(db, sample).id, {
+    typeId: type.id,
+    state: "assigned_human",
+    assignee: "human",
+    context: { summary: "already handled" },
+  });
+  const app = deps(db, [
+    JSON.stringify({ scores: [{ typeId: type.id, confidence: 0.95 }], proposal: null }),
+  ]);
+
+  const result = await retriageTask(app, task);
+
+  expect(result.state).toBe("assigned_human");
+  expect(result.assignee).toBe("human");
+  expect(result.context.summary).toBe("already handled");
+  expect(getTask(db, task.id)?.state).toBe("assigned_human");
+});
+
+test("retriageTask moves a task to a newly matched type and runs its rule", async () => {
+  const db = freshDb();
+  const oldType = insertTaskType(db, { name: "Old bucket", description: "vague" });
+  const newType = insertTaskType(db, { name: "Customer email", description: "an external question" });
+  activateRule(
+    db,
+    insertRule(db, {
+      typeId: newType.id,
+      definition: {
+        steps: [
+          { id: "s1", type: "ai", prompt: "Summarize {{task.body}}", output: "summary" },
+          { id: "s2", type: "assign", to: "human" },
+        ],
+      },
+    }).id,
+  );
+  const task = updateTask(db, insertTask(db, sample).id, {
+    typeId: oldType.id,
+    state: "assigned_human",
+    assignee: "human",
+    context: { summary: "stale" },
+  });
+  const app = deps(db, [
+    JSON.stringify({ scores: [{ typeId: newType.id, confidence: 0.95 }], proposal: null }),
+    "Customer is chasing a delivery",
+  ]);
+
+  const result = await retriageTask(app, task);
+
+  expect(result.typeId).toBe(newType.id);
+  expect(result.state).toBe("assigned_human");
+  expect(result.context.summary).toBe("Customer is chasing a delivery");
+});
+
+test("retriageTask surfaces ambiguity even for an already-assigned task", async () => {
+  const db = freshDb();
+  const a = insertTaskType(db, { name: "Customer email", description: "d" });
+  const b = insertTaskType(db, { name: "Internal request", description: "d" });
+  const task = updateTask(db, insertTask(db, sample).id, {
+    typeId: a.id,
+    state: "assigned_human",
+    assignee: "human",
+  });
+  const app = deps(db, [
+    JSON.stringify({
+      scores: [
+        { typeId: a.id, confidence: 0.7 },
+        { typeId: b.id, confidence: 0.65 },
+      ],
+      proposal: null,
+    }),
+  ]);
+
+  const result = await retriageTask(app, task);
+
+  expect(result.state).toBe("needs_type_confirmation");
+  expect(result.typeCandidates).toEqual([a.id, b.id]);
+});
+
+test("retriageOpenTasksForType only re-triages open tasks: done and processing are skipped, failed is included", async () => {
+  const db = freshDb();
+  const type = insertTaskType(db, { name: "Customer email", description: "d" });
+
+  const open1 = updateTask(db, insertTask(db, { ...sample, externalId: "open1" }).id, {
+    typeId: type.id,
+    state: "assigned_human",
+    assignee: "human",
+  });
+  const doneTask = updateTask(db, insertTask(db, { ...sample, externalId: "done1" }).id, {
+    typeId: type.id,
+    state: "done",
+  });
+  const processingTask = updateTask(db, insertTask(db, { ...sample, externalId: "proc1" }).id, {
+    typeId: type.id,
+    state: "processing",
+  });
+  const failedTask = updateTask(db, insertTask(db, { ...sample, externalId: "failed1" }).id, {
+    typeId: type.id,
+    state: "failed",
+    context: { error: "boom" },
+  });
+
+  let calls = 0;
+  const app: AppDeps = {
+    db,
+    provider: {
+      id: "stub",
+      async complete() {
+        calls++;
+        return {
+          text: JSON.stringify({ scores: [{ typeId: type.id, confidence: 0.95 }], proposal: null }),
+          toolCalls: [],
+        };
+      },
+    },
+    modelProvider: "anthropic",
+    mcp: { listTools: () => [], callTool: async () => "" },
+  };
+
+  await retriageOpenTasksForType(app, type.id);
+
+  // Exactly the two open tasks (assigned_human + failed) were re-triaged;
+  // done and processing were never even sent to the provider.
+  expect(calls).toBe(2);
+  expect(getTask(db, doneTask.id)?.state).toBe("done");
+  expect(getTask(db, processingTask.id)?.state).toBe("processing");
+  // Matched back to the same type each is already on, so both are no-ops.
+  expect(getTask(db, open1.id)?.state).toBe("assigned_human");
+  expect(getTask(db, failedTask.id)?.state).toBe("failed");
 });
