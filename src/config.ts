@@ -92,12 +92,6 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
     },
     oauth: buildOAuthProviders({
       providersJson: env.JIDOKA_OAUTH_PROVIDERS,
-      anthropic: {
-        clientId: env.JIDOKA_ANTHROPIC_OAUTH_CLIENT_ID,
-        authorizeUrl: env.JIDOKA_ANTHROPIC_OAUTH_AUTHORIZE_URL,
-        tokenUrl: env.JIDOKA_ANTHROPIC_OAUTH_TOKEN_URL,
-        scopes: env.JIDOKA_ANTHROPIC_OAUTH_SCOPES,
-      },
     }),
     mcpServers: env.JIDOKA_MCP_SERVERS
       ? (JSON.parse(env.JIDOKA_MCP_SERVERS) as McpServerConfig[])

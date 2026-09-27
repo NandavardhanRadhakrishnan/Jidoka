@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import index from "./client/index.html";
 import { loadConfig, applySettings, type Config } from "./config";
 import { openDb, migrate } from "./db";
@@ -133,6 +134,11 @@ if (import.meta.main) {
       (app.config.agent.runner === "agent-sdk" ? " (Claude Code CLI login)" : " (AiProvider)") +
       `, max ${app.config.agent.concurrency} at a time`,
   );
+  // dbPath/extensionsDir resolve relative to the process's cwd at launch, not to
+  // where the executable lives — log the resolved path so a wrong-cwd launch of
+  // the built binary is loud instead of silently creating an empty DB.
+  console.log(`Database: ${resolve(app.config.dbPath)}`);
+  console.log(`Extensions: ${resolve(app.config.extensionsDir)}`);
   await app.mcp.connectAll(app.config.mcpServers);
 
   try {

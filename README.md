@@ -122,8 +122,7 @@ export JIDOKA_OAUTH_PROVIDERS='[{
 ```
 
 An `anthropic` entry here is used for model calls whenever no API key or token is
-set in the environment. The equivalent `JIDOKA_ANTHROPIC_OAUTH_CLIENT_ID`,
-`..._AUTHORIZE_URL`, `..._TOKEN_URL` and `..._SCOPES` variables do the same thing.
+set in the environment.
 
 > **About signing in with a Claude subscription:** this is the same shape of flow
 > as `/login` in Claude Code, but it needs a client id issued for *your* app.
@@ -170,8 +169,16 @@ applied live.
 | `JIDOKA_AGENT_MODEL` | — | Model for agent runs |
 | `JIDOKA_AGENT_MAX_BUDGET_USD` | — | Per-run budget ceiling (agent-sdk) |
 | `JIDOKA_OAUTH_PROVIDERS` | `[]` | JSON array of sign-in providers (id, clientId, authorizeUrl, tokenUrl, scopes) |
-| `JIDOKA_ANTHROPIC_OAUTH_CLIENT_ID` | — | Shortcut for an `anthropic` sign-in provider (with `..._AUTHORIZE_URL`, `..._TOKEN_URL`, `..._SCOPES`) |
 | `JIDOKA_MCP_SERVERS` | `[]` | JSON array of `{ name, command, args }` |
+
+`JIDOKA_DB` and `JIDOKA_EXTENSIONS_DIR` are resolved relative to the process's
+current working directory at launch, not to wherever the `jidoka`/`jidoka.exe`
+binary lives. This is easy to miss with the built executable: running it from
+the wrong directory silently creates a brand-new empty `jidoka.db` there and
+finds zero extensions, instead of erroring. Always launch the binary from the
+directory where `jidoka.db` and `extensions/` should live, or point both
+variables at absolute paths. Startup logs the resolved absolute path of both
+so a wrong-cwd launch is visible immediately.
 
 MCP servers supply everything beyond ingestion: reading related mail, looking up
 records, writing back. Their tools are offered to `agent` rule steps as
