@@ -156,6 +156,10 @@ export async function runOneStep(
       callTool: deps.callTool,
     });
 
+  const resumeSessionId = step.resumeSessionFrom
+    ? (state.context[step.resumeSessionFrom] as string | undefined)
+    : undefined;
+
   let result;
   try {
     result = await runner.run({
@@ -163,6 +167,7 @@ export async function runOneStep(
       allowedTools: step.tools,
       maxTurns: step.maxIterations,
       ...(step.model ? { model: step.model } : {}),
+      ...(resumeSessionId ? { resumeSessionId } : {}),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

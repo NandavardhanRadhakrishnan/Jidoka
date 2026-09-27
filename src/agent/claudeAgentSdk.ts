@@ -142,6 +142,7 @@ export function createAgentSdkRunner(options: AgentSdkRunnerOptions): AgentRunne
       const model = input.model ?? options.model;
       if (model) queryOptions.model = model;
       if (options.maxBudgetUsd !== undefined) queryOptions.maxBudgetUsd = options.maxBudgetUsd;
+      if (input.resumeSessionId) queryOptions.resume = input.resumeSessionId;
 
       let finalResult: SdkResultMessage | undefined;
       let text = "";

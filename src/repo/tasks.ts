@@ -46,10 +46,11 @@ function toTask(row: Row): Task {
 export function insertTask(db: Database, input: NewTask): Task {
   const now = new Date().toISOString();
   const id = crypto.randomUUID();
+  const context = input.revision ? { revision: input.revision } : {};
   db.query(
     `INSERT INTO tasks (id, source_id, external_id, url, title, body, metadata,
                         type_id, type_candidates, state, assignee, context, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'ingested', NULL, '{}', ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'ingested', NULL, ?, ?, ?)`,
   ).run(
     id,
     input.sourceId,
@@ -58,6 +59,7 @@ export function insertTask(db: Database, input: NewTask): Task {
     input.title,
     input.body,
     JSON.stringify(input.metadata ?? {}),
+    JSON.stringify(context),
     now,
     now,
   );
@@ -95,7 +97,8 @@ export function updateTask(db: Database, id: string, patch: TaskPatch): Task {
   const next = { ...current, ...patch, updatedAt: new Date().toISOString() };
   db.query(
     `UPDATE tasks SET state = ?, type_id = ?, type_candidates = ?, assignee = ?,
-                      deadline = ?, dedup_candidate_id = ?, context = ?, updated_at = ? WHERE id = ?`,
+                      deadline = ?, dedup_candidate_id = ?, context = ?,
+                      title = ?, body = ?, metadata = ?, updated_at = ? WHERE id = ?`,
   ).run(
     next.state,
     next.typeId,
@@ -104,6 +107,9 @@ export function updateTask(db: Database, id: string, patch: TaskPatch): Task {
     next.deadline,
     next.dedupCandidateId,
     JSON.stringify(next.context),
+    next.title,
+    next.body,
+    JSON.stringify(next.metadata),
     next.updatedAt,
     id,
   );

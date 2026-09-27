@@ -62,6 +62,21 @@ test("updateTask patches a dedup candidate id", () => {
   expect(getTask(db, task.id)?.dedupCandidateId).toBe(other.id);
 });
 
+test("insertTask stamps context.revision when the input carries one", () => {
+  const db = freshDb();
+  const task = insertTask(db, { ...sample, revision: "rev-1" });
+
+  expect(task.context.revision).toBe("rev-1");
+  expect(getTask(db, task.id)?.context.revision).toBe("rev-1");
+});
+
+test("insertTask leaves context empty when no revision is given", () => {
+  const db = freshDb();
+  const task = insertTask(db, sample);
+
+  expect(task.context).toEqual({});
+});
+
 test("insertTask defaults dedupCandidateId to null", () => {
   const db = freshDb();
   const task = insertTask(db, sample);
@@ -91,6 +106,25 @@ test("insertTask rejects a duplicate source item", () => {
   insertTask(db, sample);
 
   expect(() => insertTask(db, sample)).toThrow();
+});
+
+test("updateTask patches title, body and metadata", () => {
+  const db = freshDb();
+  const task = insertTask(db, sample);
+
+  const updated = updateTask(db, task.id, {
+    title: "Invoice question (updated)",
+    body: "New body from a reopened source item",
+    metadata: { from: "b@example.com" },
+  });
+
+  expect(updated.title).toBe("Invoice question (updated)");
+  expect(updated.body).toBe("New body from a reopened source item");
+  expect(updated.metadata).toEqual({ from: "b@example.com" });
+  const fetched = getTask(db, task.id)!;
+  expect(fetched.title).toBe("Invoice question (updated)");
+  expect(fetched.body).toBe("New body from a reopened source item");
+  expect(fetched.metadata).toEqual({ from: "b@example.com" });
 });
 
 test("updateTask patches state, type, assignee and context", () => {

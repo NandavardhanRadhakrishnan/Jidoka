@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { openDb, migrate } from "../../src/db";
 import { pollOnce, startPoller } from "../../src/sources/poller";
 import { getCursor } from "../../src/repo/sourceState";
-import { findTaskBySource, deleteTask } from "../../src/repo/tasks";
+import { findTaskBySource, deleteTask, updateTask } from "../../src/repo/tasks";
 import { recordMergedSourceItem } from "../../src/repo/mergedSourceItems";
 import type { TaskSource, RawItem } from "../../src/sources/types";
 import type { Task } from "../../src/domain/task";
@@ -87,6 +87,99 @@ test("pollOnce does not re-create a task whose source item was merged away as a 
   const second = await pollOnce(db, source, async () => {});
 
   expect(second).toHaveLength(0);
+});
+
+test("pollOnce calls onTaskChanged when a done task's revision changes, without re-creating it", async () => {
+  const db = freshDb();
+  const source = fakeSource([
+    { items: [{ externalId: "m1", title: "One", body: "first", revision: "rev-1" }], cursor: "c1" },
+    { items: [{ externalId: "m1", title: "One (updated)", body: "second", revision: "rev-2" }], cursor: "c1" },
+  ]);
+  await pollOnce(db, source, async () => {});
+  const task = findTaskBySource(db, "fake", "m1")!;
+  updateTask(db, task.id, { state: "done" });
+
+  const changed: { task: Task; item: RawItem }[] = [];
+  const second = await pollOnce(db, source, async () => {}, async (t, item) => {
+    changed.push({ task: t, item });
+  });
+
+  expect(second).toHaveLength(0);
+  expect(changed).toHaveLength(1);
+  expect(changed[0]?.task.id).toBe(task.id);
+  expect(changed[0]?.item.revision).toBe("rev-2");
+});
+
+test("pollOnce does not call onTaskChanged when the revision is unchanged", async () => {
+  const db = freshDb();
+  const source = fakeSource([
+    { items: [{ externalId: "m1", title: "One", body: "first", revision: "rev-1" }], cursor: "c1" },
+    { items: [{ externalId: "m1", title: "One", body: "first", revision: "rev-1" }], cursor: "c1" },
+  ]);
+  await pollOnce(db, source, async () => {});
+  const task = findTaskBySource(db, "fake", "m1")!;
+  updateTask(db, task.id, { state: "done" });
+
+  let called = false;
+  await pollOnce(db, source, async () => {}, async () => {
+    called = true;
+  });
+
+  expect(called).toBe(false);
+});
+
+test("pollOnce does not call onTaskChanged for a task that is currently processing", async () => {
+  const db = freshDb();
+  const source = fakeSource([
+    { items: [{ externalId: "m1", title: "One", body: "first", revision: "rev-1" }], cursor: "c1" },
+    { items: [{ externalId: "m1", title: "One", body: "second", revision: "rev-2" }], cursor: "c1" },
+  ]);
+  await pollOnce(db, source, async () => {});
+  const task = findTaskBySource(db, "fake", "m1")!;
+  updateTask(db, task.id, { state: "processing" });
+
+  let called = false;
+  await pollOnce(db, source, async () => {}, async () => {
+    called = true;
+  });
+
+  expect(called).toBe(false);
+});
+
+test("pollOnce does not call onTaskChanged when the item carries no revision at all", async () => {
+  const db = freshDb();
+  const source = fakeSource([
+    { items: [{ externalId: "m1", title: "One", body: "first" }], cursor: "c1" },
+    { items: [{ externalId: "m1", title: "One", body: "changed content" }], cursor: "c1" },
+  ]);
+  await pollOnce(db, source, async () => {});
+  const task = findTaskBySource(db, "fake", "m1")!;
+  updateTask(db, task.id, { state: "done" });
+
+  let called = false;
+  await pollOnce(db, source, async () => {}, async () => {
+    called = true;
+  });
+
+  expect(called).toBe(false);
+});
+
+test("pollOnce calls onTaskChanged for an assigned_human task whose revision changed", async () => {
+  const db = freshDb();
+  const source = fakeSource([
+    { items: [{ externalId: "m1", title: "One", body: "first", revision: "rev-1" }], cursor: "c1" },
+    { items: [{ externalId: "m1", title: "One", body: "second", revision: "rev-2" }], cursor: "c1" },
+  ]);
+  await pollOnce(db, source, async () => {});
+  const task = findTaskBySource(db, "fake", "m1")!;
+  updateTask(db, task.id, { state: "assigned_human", assignee: "human" });
+
+  let called = false;
+  await pollOnce(db, source, async () => {}, async () => {
+    called = true;
+  });
+
+  expect(called).toBe(true);
 });
 
 test("pollOnce keeps the old cursor when the source throws", async () => {

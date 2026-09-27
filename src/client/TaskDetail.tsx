@@ -3,7 +3,7 @@ import type { Task } from "../domain/task";
 import type { Hint } from "../domain/hint";
 import { api, type HandoffTarget } from "./api";
 import { Handoff, openUrlTargets } from "./Handoff";
-import { daysUntil, deadlineUrgency } from "./columns";
+import { daysUntil, deadlineUrgency, taskAge } from "./columns";
 import { Icon } from "./icons";
 
 interface StepLogEntry {
@@ -22,6 +22,15 @@ interface MergedFromRecord {
   mergedAt: string;
 }
 
+interface ThreadPass {
+  outputs: Record<string, unknown>;
+  ruleLog: StepLogEntry[];
+  assignee: Task["assignee"];
+  completedAt?: string;
+  completionNote?: string;
+  closedAt: string;
+}
+
 /** Context keys the rule writes for its own bookkeeping, not for reading. */
 const INTERNAL_KEYS = new Set([
   "ruleLog",
@@ -32,7 +41,66 @@ const INTERNAL_KEYS = new Set([
   "pickedUpAt",
   "mergedFrom",
   "dedupRationale",
+  "thread",
+  "revision",
+  "isFollowUp",
 ]);
+
+function kindBadgeLabel(type: string): string {
+  return type === "mcp_tool" ? "mcp tool" : type;
+}
+
+/** Which step (and its kind, for the badge) produced a given output key within one pass's own ruleLog. */
+function producerFor(ruleLog: StepLogEntry[], key: string): string | null {
+  const entry = ruleLog.find((e) => e.output === key && e.type !== "assign");
+  return entry ? entry.type : null;
+}
+
+function OutputRow({ outputKey, value, kind }: { outputKey: string; value: unknown; kind: string | null }) {
+  const [open, setOpen] = useState(false);
+  const body = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+
+  return (
+    <div className={`out-row${open ? " open" : ""}`}>
+      <button type="button" className="out-row-toggle" onClick={() => setOpen((v) => !v)}>
+        <span className="key mono">{outputKey}</span>
+        <span className="gist">{body}</span>
+        {kind && <span className="kind-badge">{kindBadgeLabel(kind)}</span>}
+        <span className="chevron">▶</span>
+      </button>
+      {open && <div className="out-row-body">{body}</div>}
+    </div>
+  );
+}
+
+function PastPassRow({ passNumber, pass }: { passNumber: number; pass: ThreadPass }) {
+  const [open, setOpen] = useState(false);
+  const outputEntries = Object.entries(pass.outputs);
+  const summary = pass.completionNote ?? (pass.assignee ? `assigned to ${pass.assignee}` : "closed");
+
+  return (
+    <div className={`thread-pass${open ? " open" : ""}`}>
+      <button type="button" className="thread-pass-toggle" onClick={() => setOpen((v) => !v)}>
+        <span className="n">pass {passNumber}</span>
+        <span className="summary">{summary}</span>
+        <span className="count">
+          {outputEntries.length} output{outputEntries.length === 1 ? "" : "s"}
+        </span>
+        <span className="closed-at">{taskAge(pass.closedAt)} ago</span>
+        <span className="chevron">▶</span>
+      </button>
+      {open && (
+        <div className="thread-pass-body">
+          <div className="out-list">
+            {outputEntries.map(([key, value]) => (
+              <OutputRow key={key} outputKey={key} value={value} kind={producerFor(pass.ruleLog, key)} />
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 const smallGhostBtn = { fontSize: 11, padding: 0 } as const;
 
@@ -548,7 +616,6 @@ export function TaskDetail({
     (task.context.handoff as HandoffTarget[] | undefined) ?? null,
   );
   const [canLaunchTerminal, setCanLaunchTerminal] = useState(false);
-  const [traceOpen, setTraceOpen] = useState(false);
 
   async function pickUp() {
     setBusy(true);
@@ -568,6 +635,8 @@ export function TaskDetail({
 
   const log = (task.context.ruleLog as StepLogEntry[] | undefined) ?? [];
   const outputs = Object.entries(task.context).filter(([key]) => !INTERNAL_KEYS.has(key));
+  const thread = Array.isArray(task.context.thread) ? (task.context.thread as ThreadPass[]) : [];
+  const currentPassNumber = thread.length + 1;
 
   // A key only carries real model/tool output when an ai, agent, or mcp_tool
   // step's log entry named it — an assign step's `note:<id>` is pure
@@ -580,9 +649,7 @@ export function TaskDetail({
   function provenanceLabel(key: string): { text: string; kind: "note" | "produced" | "unknown" } {
     if (key.startsWith("note:")) return { text: "note", kind: "note" };
     const producer = producedBy.get(key);
-    if (producer?.type === "ai") return { text: "AI output", kind: "produced" };
-    if (producer?.type === "agent") return { text: "agent output", kind: "produced" };
-    if (producer?.type === "mcp_tool") return { text: "tool output", kind: "produced" };
+    if (producer) return { text: kindBadgeLabel(producer.type), kind: "produced" };
     return { text: "context", kind: "unknown" };
   }
 
@@ -693,42 +760,70 @@ export function TaskDetail({
             </section>
           )}
 
-          {outputs.length > 0 && (
+          {task.body && (
             <section className="drawer-section">
-              <h6 style={{ margin: 0 }}>What the rule produced</h6>
-              {outputs.map(([key, value]) => {
-                const provenance = provenanceLabel(key);
-                const producer = producedBy.get(key);
-                const from = stepFromLabel(producer);
-                const body = typeof value === "string" ? value : JSON.stringify(value, null, 2);
-                const copyable = typeof value === "string" && value.length > 0;
-                if (producer && (producer.type === "ai" || producer.type === "agent")) {
-                  return (
-                    <StepOutput
-                      key={key}
-                      taskId={task.id}
-                      taskState={task.state}
-                      stepId={producer.stepId}
-                      outputKey={key}
-                      from={from}
-                      copyable={copyable}
-                      body={body}
-                      provenance={provenance}
-                      onChanged={onChanged}
-                    />
-                  );
-                }
-                return (
-                  <div key={key} className="artifact">
-                    <div className="head">
-                      <span className="mono key">{key}</span>
-                      {from && <span style={{ fontSize: 11, color: "var(--color-neutral-600)" }}>{from}</span>}
-                      <ArtifactHeadActions copyable={copyable} copyText={body} provenance={provenance} />
-                    </div>
-                    <div className="content">{body}</div>
+              <h6 style={{ margin: 0 }}>Task content</h6>
+              <div className="task-body">{task.body}</div>
+            </section>
+          )}
+
+          {(outputs.length > 0 || thread.length > 0) && (
+            <section className="drawer-section">
+              <h6 style={{ margin: 0 }}>Thread</h6>
+              <div className="thread-list">
+                <div className="thread-pass current open">
+                  <div className="thread-pass-toggle">
+                    <span className="n">pass {currentPassNumber}</span>
+                    <span className="summary">current</span>
+                    <span className="count">
+                      {outputs.length} output{outputs.length === 1 ? "" : "s"}
+                    </span>
+                    <span className="closed-at">today</span>
                   </div>
-                );
-              })}
+                  <div className="thread-pass-body">
+                    {outputs.map(([key, value]) => {
+                      const provenance = provenanceLabel(key);
+                      const producer = producedBy.get(key);
+                      const from = stepFromLabel(producer);
+                      const body = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+                      const copyable = typeof value === "string" && value.length > 0;
+                      if (producer && (producer.type === "ai" || producer.type === "agent")) {
+                        return (
+                          <StepOutput
+                            key={key}
+                            taskId={task.id}
+                            taskState={task.state}
+                            stepId={producer.stepId}
+                            outputKey={key}
+                            from={from}
+                            copyable={copyable}
+                            body={body}
+                            provenance={provenance}
+                            onChanged={onChanged}
+                          />
+                        );
+                      }
+                      return (
+                        <div key={key} className="artifact">
+                          <div className="head">
+                            <span className="mono key">{key}</span>
+                            {from && <span style={{ fontSize: 11, color: "var(--color-neutral-600)" }}>{from}</span>}
+                            <ArtifactHeadActions copyable={copyable} copyText={body} provenance={provenance} />
+                          </div>
+                          <div className="content">{body}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {thread
+                  .map((pass, i) => ({ pass, passNumber: i + 1 }))
+                  .reverse()
+                  .map(({ pass, passNumber }) => (
+                    <PastPassRow key={passNumber} passNumber={passNumber} pass={pass} />
+                  ))}
+              </div>
             </section>
           )}
 
@@ -752,44 +847,26 @@ export function TaskDetail({
             </section>
           )}
 
-          {task.body && (
+          {task.state === "done" ? (
             <section className="drawer-section">
-              <h6 style={{ margin: 0 }}>Task content</h6>
-              <div className="task-body">{task.body}</div>
-            </section>
-          )}
-
-          {log.length > 0 && (
-            <section className="drawer-section">
-              <button className="trace-toggle" onClick={() => setTraceOpen((v) => !v)}>
-                <span>Run trace</span>
-                <span className="mono" style={{ fontSize: 11, color: "var(--color-neutral-700)" }}>
-                  {log.length} step(s)
-                </span>
-                <span className="mono" style={{ marginLeft: "auto", fontSize: 11, color: "var(--color-accent)" }}>
-                  {traceOpen ? "hide" : "show"}
-                </span>
-              </button>
-              {traceOpen && (
-                <div style={{ display: "flex", flexDirection: "column" }}>
-                  {log.map((entry, index) => (
-                    <div key={`${entry.stepId}-${index}`} className="trace-entry">
-                      <span className="tone" style={{ background: entry.error ? "var(--color-accent)" : "var(--color-neutral-400)" }} />
-                      <span className="mono id">{entry.stepId} · {entry.type}</span>
-                      <span style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
-                        {entry.output && (
-                          <span className="mono" style={{ fontSize: 11, color: "var(--color-neutral-700)", lineHeight: 1.5 }}>
-                            {entry.output}
-                          </span>
-                        )}
-                        {entry.error && <span className="error-text">{entry.error}</span>}
-                      </span>
-                    </div>
-                  ))}
-                </div>
+              {typeof task.context.completionNote === "string" && (
+                <p className="text-muted">Note: {task.context.completionNote}</p>
               )}
+              <button className="btn btn-secondary" style={{ alignSelf: "flex-start" }} disabled={busy} onClick={() => void act(() => api.reopenTask(task.id))}>
+                Reopen
+              </button>
             </section>
-          )}
+          ) : task.state !== "assigned_human" ? (
+            <section className="drawer-section">
+              <div className="field">
+                <label>Closing note (optional)</label>
+                <input className="input" value={note} placeholder="What you did, or why this is finished" onChange={(e) => setNote(e.target.value)} />
+              </div>
+              <button className="btn btn-primary" style={{ alignSelf: "flex-start" }} disabled={busy} onClick={() => void act(() => api.completeTask(task.id, note))}>
+                {busy ? "Saving…" : "Mark done"}
+              </button>
+            </section>
+          ) : null}
 
           <section className="drawer-section">
             {!dedupOpen ? (
@@ -847,27 +924,6 @@ export function TaskDetail({
               </>
             )}
           </section>
-
-          {task.state === "done" ? (
-            <section className="drawer-section">
-              {typeof task.context.completionNote === "string" && (
-                <p className="text-muted">Note: {task.context.completionNote}</p>
-              )}
-              <button className="btn btn-secondary" style={{ alignSelf: "flex-start" }} disabled={busy} onClick={() => void act(() => api.reopenTask(task.id))}>
-                Reopen
-              </button>
-            </section>
-          ) : task.state !== "assigned_human" ? (
-            <section className="drawer-section">
-              <div className="field">
-                <label>Closing note (optional)</label>
-                <input className="input" value={note} placeholder="What you did, or why this is finished" onChange={(e) => setNote(e.target.value)} />
-              </div>
-              <button className="btn btn-primary" style={{ alignSelf: "flex-start" }} disabled={busy} onClick={() => void act(() => api.completeTask(task.id, note))}>
-                {busy ? "Saving…" : "Mark done"}
-              </button>
-            </section>
-          ) : null}
 
           {error && <p className="error-text">{error}</p>}
         </div>

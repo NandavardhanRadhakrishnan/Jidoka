@@ -25,6 +25,13 @@ const AgentStep = z.object({
   maxIterations: z.number().int().min(1).max(20).default(6),
   /** Catalog id from src/ai/models.ts. Unset falls back to config.agent.model. */
   model: z.string().optional(),
+  /**
+   * Context key holding a prior run's session id. When set and that key holds
+   * a value, this step resumes that Agent SDK session instead of starting a
+   * fresh one — the mechanism a follow-up pass uses to continue the same
+   * conversation a first pass started.
+   */
+  resumeSessionFrom: z.string().optional(),
   output: z.string(),
 });
 

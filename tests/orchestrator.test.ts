@@ -6,6 +6,7 @@ import { insertRule, activateRule, getActiveRule } from "../src/repo/rules";
 import { wasMerged } from "../src/repo/mergedSourceItems";
 import {
   onTaskIngested,
+  onTaskChanged,
   confirmTaskType,
   skipOnboarding,
   onboardType,
@@ -624,6 +625,161 @@ test("rerunStep updates only the target context key and appends ruleLog", async 
   const log = updated.context.ruleLog as { stepId: string }[];
   expect(log).toHaveLength(4);
   expect(log[3]).toMatchObject({ stepId: "s1", type: "ai", output: "a" });
+});
+
+test("a matched task with an active rule stamps isFollowUp false on its first run", async () => {
+  const db = freshDb();
+  const type = insertTaskType(db, { name: "Customer email", description: "d" });
+  activateRule(
+    db,
+    insertRule(db, {
+      typeId: type.id,
+      definition: {
+        steps: [
+          { id: "s1", type: "ai", prompt: "isFollowUp={{context.isFollowUp}}", output: "flag" },
+          { id: "s2", type: "assign", to: "human" },
+        ],
+      },
+    }).id,
+  );
+  const task = insertTask(db, sample);
+  let capturedPrompt = "";
+  let call = 0;
+  const app: AppDeps = {
+    db,
+    provider: {
+      id: "stub",
+      async complete(req) {
+        call++;
+        if (call === 1) {
+          return {
+            text: JSON.stringify({ scores: [{ typeId: type.id, confidence: 0.95 }], proposal: null }),
+            toolCalls: [],
+          };
+        }
+        const first = req.messages[0];
+        capturedPrompt = first && "content" in first ? first.content : "";
+        return { text: "captured", toolCalls: [] };
+      },
+    },
+    modelProvider: "anthropic",
+    mcp: { listTools: () => [], callTool: async () => "" },
+  };
+
+  const result = await onTaskIngested(app, task);
+
+  expect(capturedPrompt).toBe("isFollowUp=false");
+  expect(result.context.isFollowUp).toBe("false");
+});
+
+test("onTaskChanged archives the current pass, stamps isFollowUp true and the new revision, and reruns the active rule", async () => {
+  const db = freshDb();
+  const type = insertTaskType(db, { name: "Code review", description: "d" });
+  activateRule(
+    db,
+    insertRule(db, {
+      typeId: type.id,
+      definition: {
+        steps: [
+          { id: "s1", type: "ai", prompt: "pass={{context.isFollowUp}}", output: "review" },
+          { id: "s2", type: "assign", to: "human" },
+        ],
+      },
+    }).id,
+  );
+  const initial = updateTask(db, insertTask(db, sample).id, {
+    typeId: type.id,
+    state: "done",
+    assignee: "human",
+    title: "Old title",
+    body: "Old body",
+    context: {
+      revision: "rev-1",
+      isFollowUp: "false",
+      review: "first pass review",
+      completedAt: "2026-01-01T00:00:00.000Z",
+      completionNote: "Left comments, waiting for author",
+      ruleLog: [
+        { stepId: "s1", type: "ai", output: "review" },
+        { stepId: "s2", type: "assign" },
+      ],
+    },
+  });
+  const app = deps(db, ["pass=true"]);
+
+  const result = await onTaskChanged(app, initial, {
+    externalId: initial.externalId,
+    title: "New title",
+    body: "New body",
+    revision: "rev-2",
+  });
+
+  expect(result.title).toBe("New title");
+  expect(result.body).toBe("New body");
+  expect(result.context.revision).toBe("rev-2");
+  expect(result.context.isFollowUp).toBe("true");
+  expect(result.context.completedAt).toBeUndefined();
+  expect(result.context.completionNote).toBeUndefined();
+  expect(result.context.review).toBe("pass=true");
+  expect(result.state).toBe("assigned_human");
+
+  const thread = result.context.thread as Array<Record<string, unknown>>;
+  expect(thread).toHaveLength(1);
+  expect(thread[0]).toMatchObject({
+    outputs: { review: "first pass review" },
+    assignee: "human",
+    completedAt: "2026-01-01T00:00:00.000Z",
+    completionNote: "Left comments, waiting for author",
+  });
+  expect(thread[0]?.ruleLog).toEqual([
+    { stepId: "s1", type: "ai", output: "review" },
+    { stepId: "s2", type: "assign" },
+  ]);
+});
+
+test("onTaskChanged archives passes in order across multiple reopens", async () => {
+  const db = freshDb();
+  const type = insertTaskType(db, { name: "Code review", description: "d" });
+  activateRule(
+    db,
+    insertRule(db, {
+      typeId: type.id,
+      definition: {
+        steps: [
+          { id: "s1", type: "ai", prompt: "go", output: "review" },
+          { id: "s2", type: "assign", to: "human" },
+        ],
+      },
+    }).id,
+  );
+  const initial = updateTask(db, insertTask(db, sample).id, {
+    typeId: type.id,
+    state: "done",
+    assignee: "human",
+    context: { revision: "rev-1", review: "pass 1", ruleLog: [{ stepId: "s1", type: "ai", output: "review" }] },
+  });
+  const app = deps(db, ["pass 2", "pass 3"]);
+
+  const afterFirstReopen = await onTaskChanged(app, initial, {
+    externalId: initial.externalId,
+    title: initial.title,
+    body: initial.body,
+    revision: "rev-2",
+  });
+  const done = updateTask(db, afterFirstReopen.id, { state: "done" });
+
+  const afterSecondReopen = await onTaskChanged(app, done, {
+    externalId: done.externalId,
+    title: done.title,
+    body: done.body,
+    revision: "rev-3",
+  });
+
+  const thread = afterSecondReopen.context.thread as Array<Record<string, unknown>>;
+  expect(thread).toHaveLength(2);
+  expect(thread[0]?.outputs).toEqual({ review: "pass 1" });
+  expect(thread[1]?.outputs).toEqual({ review: "pass 2" });
+  expect(afterSecondReopen.context.review).toBe("pass 3");
 });
 
 test("getDependents respects ranStepIds from ruleLog", () => {

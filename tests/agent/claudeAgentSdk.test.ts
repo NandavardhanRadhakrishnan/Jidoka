@@ -215,6 +215,34 @@ test("maxBudgetUsd and model are passed through when set", async () => {
   expect(captured?.options?.maxTurns).toBe(7);
 });
 
+test("resumeSessionId becomes options.resume", async () => {
+  let captured: CapturedParams | undefined;
+  const runner = createAgentSdkRunner({
+    mcpServers: {},
+    queryFn: capturingQuery([successResult("done")], (params) => {
+      captured = params;
+    }),
+  });
+
+  await runner.run(baseInput({ resumeSessionId: "sess-42" }));
+
+  expect(captured?.options?.resume).toBe("sess-42");
+});
+
+test("resumeSessionId is omitted from options when not set", async () => {
+  let captured: CapturedParams | undefined;
+  const runner = createAgentSdkRunner({
+    mcpServers: {},
+    queryFn: capturingQuery([successResult("done")], (params) => {
+      captured = params;
+    }),
+  });
+
+  await runner.run(baseInput());
+
+  expect(captured && "resume" in (captured.options ?? {})).toBe(false);
+});
+
 test("a per-run model overrides the runner's configured default", async () => {
   let captured: CapturedParams | undefined;
   const runner = createAgentSdkRunner({

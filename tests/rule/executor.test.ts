@@ -432,6 +432,103 @@ test("an agent step with a model set passes it through the in-process runner", a
   expect(seenModels).toEqual(["claude-opus-5"]);
 });
 
+test("an agent step with resumeSessionFrom passes resumeSessionId through when the context key holds a value", async () => {
+  const definition = RuleDefinitionSchema.parse({
+    steps: [
+      {
+        id: "s1",
+        type: "agent",
+        prompt: "Follow up",
+        resumeSessionFrom: "review_session",
+        output: "review",
+      },
+      { id: "s2", type: "assign", to: "human" },
+    ],
+  });
+  let captured: { resumeSessionId?: string } | undefined;
+  const taskWithSession = { ...task, context: { review_session: "sess-1" } };
+
+  await runRule(
+    {
+      provider: scriptedProvider([]),
+      callTool: noTools,
+      loadRule: noRules,
+      listTools: () => [],
+      runAgent: {
+        id: "fake",
+        async run(input) {
+          captured = input;
+          return { text: "resumed review", toolCalls: [] };
+        },
+      },
+    },
+    definition,
+    taskWithSession,
+  );
+
+  expect(captured?.resumeSessionId).toBe("sess-1");
+});
+
+test("an agent step with resumeSessionFrom omits resumeSessionId when the context key is absent", async () => {
+  const definition = RuleDefinitionSchema.parse({
+    steps: [
+      { id: "s1", type: "agent", prompt: "Follow up", resumeSessionFrom: "review_session", output: "review" },
+      { id: "s2", type: "assign", to: "human" },
+    ],
+  });
+  let captured: { resumeSessionId?: string } | undefined;
+
+  await runRule(
+    {
+      provider: scriptedProvider([]),
+      callTool: noTools,
+      loadRule: noRules,
+      listTools: () => [],
+      runAgent: {
+        id: "fake",
+        async run(input) {
+          captured = input;
+          return { text: "fresh review", toolCalls: [] };
+        },
+      },
+    },
+    definition,
+    task,
+  );
+
+  expect(captured && "resumeSessionId" in captured).toBe(false);
+});
+
+test("an agent step with no resumeSessionFrom never sets resumeSessionId", async () => {
+  const definition = RuleDefinitionSchema.parse({
+    steps: [
+      { id: "s1", type: "agent", prompt: "Go", output: "review" },
+      { id: "s2", type: "assign", to: "human" },
+    ],
+  });
+  let captured: { resumeSessionId?: string } | undefined;
+
+  await runRule(
+    {
+      provider: scriptedProvider([]),
+      callTool: noTools,
+      loadRule: noRules,
+      listTools: () => [],
+      runAgent: {
+        id: "fake",
+        async run(input) {
+          captured = input;
+          return { text: "review", toolCalls: [] };
+        },
+      },
+    },
+    definition,
+    { ...task, context: { review_session: "sess-unrelated" } },
+  );
+
+  expect(captured && "resumeSessionId" in captured).toBe(false);
+});
+
 test("the schema rejects an unknown step type", () => {
   expect(() =>
     RuleDefinitionSchema.parse({ steps: [{ id: "x", type: "teleport" }] }),

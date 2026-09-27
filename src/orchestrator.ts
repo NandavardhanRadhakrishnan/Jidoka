@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite";
 import type { AiProvider, ToolSpec } from "./ai/provider";
 import type { ModelProviderId } from "./ai/models";
 import { modelCatalog } from "./ai/models";
-import type { Task } from "./domain/task";
+import type { Assignee, Task } from "./domain/task";
 import type { Rule } from "./domain/rule";
 import { getTask, listTasks, updateTask, deleteTask } from "./repo/tasks";
 import { recordMergedSourceItem } from "./repo/mergedSourceItems";
@@ -21,11 +21,18 @@ import {
 } from "./repo/rules";
 import { triageTask } from "./triage/triage";
 import { checkForDuplicate } from "./dedup/dedup";
-import { runRule, rerunStep as rerunRuleStep, type StepLogEntry, type ToolCaller } from "./rule/executor";
+import {
+  runRule,
+  rerunStep as rerunRuleStep,
+  type ResolvedHandoffTarget,
+  type StepLogEntry,
+  type ToolCaller,
+} from "./rule/executor";
 import { findDependentSteps } from "./rule/dependents";
 import type { AgentRunner } from "./agent/runner";
 import { buildRule } from "./rule/builder";
 import { listHintsForRule, listHintsForStep } from "./repo/hints";
+import type { RawItem } from "./sources/types";
 
 export interface AppDeps {
   db: Database;
@@ -121,7 +128,10 @@ export async function runRuleForTask(
   const active = rule ?? getActiveRule(deps.db, task.typeId);
   if (!active) return updateTask(deps.db, task.id, { state: "needs_onboarding" });
 
-  const running = updateTask(deps.db, task.id, { state: "processing" });
+  const running = updateTask(deps.db, task.id, {
+    state: "processing",
+    context: { isFollowUp: "false", ...task.context },
+  });
 
   try {
     const result = await runRule(executorDepsForRule(deps, active), active.definition, running);
@@ -280,6 +290,70 @@ export function reopenTask(deps: AppDeps, taskId: string): Task {
     assignee: task.assignee ?? "human",
     context,
   });
+}
+
+interface ThreadPass {
+  /** Snapshot of that pass's produced context values — context[key] gets
+   *  overwritten by the next pass, so the archive carries the values, not
+   *  just which steps ran. */
+  outputs: Record<string, unknown>;
+  /** Tells the UI which step type (ai/agent/mcp_tool) produced each output
+   *  key, for the kind badge — the values themselves live in `outputs`. */
+  ruleLog: StepLogEntry[];
+  handoff?: ResolvedHandoffTarget[];
+  assignee: Assignee | null;
+  completedAt?: string;
+  completionNote?: string;
+  closedAt: string;
+}
+
+function asThreadArray(value: unknown): ThreadPass[] {
+  return Array.isArray(value) ? (value as ThreadPass[]) : [];
+}
+
+/** A source reports a revision change on a task that already passed through
+ *  a rule at least once (done, or currently assigned): archive the pass that
+ *  just closed and run the current active rule again over the refreshed
+ *  content, so a rule's `agent` steps can resume their prior session and ask
+ *  a follow-up instead of starting cold. */
+export async function onTaskChanged(deps: AppDeps, task: Task, item: RawItem): Promise<Task> {
+  if (!task.typeId) {
+    // Every REOPENABLE_STATES entry implies a type was assigned — defensive
+    // only, not a real path.
+    return updateTask(deps.db, task.id, { context: { ...task.context, revision: item.revision } });
+  }
+
+  const pass: ThreadPass = {
+    outputs: Object.fromEntries(
+      ruleLogFromContext(task.context)
+        .filter((e) => e.output && e.type !== "assign")
+        .map((e) => [e.output as string, task.context[e.output as string]]),
+    ),
+    ruleLog: ruleLogFromContext(task.context),
+    handoff: task.context.handoff as ResolvedHandoffTarget[] | undefined,
+    assignee: task.assignee,
+    completedAt: task.context.completedAt as string | undefined,
+    completionNote: task.context.completionNote as string | undefined,
+    closedAt: new Date().toISOString(),
+  };
+
+  const { completedAt: _completedAt, completionNote: _note, ...restContext } = task.context;
+
+  const reopened = updateTask(deps.db, task.id, {
+    title: item.title,
+    body: item.body,
+    metadata: item.metadata ?? {},
+    state: "processing",
+    assignee: null,
+    context: {
+      ...restContext,
+      revision: item.revision,
+      isFollowUp: "true",
+      thread: [...asThreadArray(task.context.thread), pass],
+    },
+  });
+
+  return runRuleForTask(deps, reopened);
 }
 
 export async function skipOnboarding(deps: AppDeps, taskId: string): Promise<Task> {

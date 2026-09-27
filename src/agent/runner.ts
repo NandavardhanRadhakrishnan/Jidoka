@@ -15,6 +15,12 @@ export interface AgentRunInput {
   allowedTools: string[];
   maxTurns: number;
   model?: string;
+  /**
+   * A prior run's session id to continue instead of starting fresh. Only the
+   * Claude Agent SDK backend has a real resumable session — the in-process
+   * runner accepts and ignores this.
+   */
+  resumeSessionId?: string;
 }
 
 export interface AgentRunResult {
