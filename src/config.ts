@@ -7,6 +7,15 @@ export interface McpServerConfig {
   name: string;
   command: string;
   args: string[];
+  /**
+   * Extra environment variables for this server's subprocess only (e.g. a
+   * credential the server itself needs). The stdio transport does NOT inherit
+   * the parent process's environment by default — only a small OS-specific
+   * safe list (PATH and the like) — so a server that reads its own credential
+   * from an env var needs it listed here explicitly, or it silently finds
+   * nothing and may fall back to its own default behavior instead of erroring.
+   */
+  env?: Record<string, string>;
 }
 
 export interface Config {

@@ -8,3 +8,4 @@ jidoka.exe
 .worktrees/
 .superpowers/
 .playwright-mcp/
+.local/

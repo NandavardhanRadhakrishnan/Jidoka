@@ -169,7 +169,21 @@ applied live.
 | `JIDOKA_AGENT_MODEL` | — | Model for agent runs |
 | `JIDOKA_AGENT_MAX_BUDGET_USD` | — | Per-run budget ceiling (agent-sdk) |
 | `JIDOKA_OAUTH_PROVIDERS` | `[]` | JSON array of sign-in providers (id, clientId, authorizeUrl, tokenUrl, scopes) |
-| `JIDOKA_MCP_SERVERS` | `[]` | JSON array of `{ name, command, args }` |
+| `JIDOKA_MCP_SERVERS` | `[]` | JSON array of `{ name, command, args, env? }` |
+
+An MCP server's subprocess does **not** inherit Jidoka's environment by
+default — only a small OS-specific safe list (`PATH` and the like). A server
+that needs its own credential (e.g. `GITHUB_PERSONAL_ACCESS_TOKEN`) must have
+it listed in that entry's `env`, or the server silently finds no credential —
+some servers error in that case, but others silently fall back to their own
+default behavior (e.g. an interactive OAuth flow) instead, which is worse and
+easy to miss. Put the actual secret value in Jidoka's own `.env` (or the real
+environment), then reference it explicitly:
+
+```json
+{ "name": "github", "command": "/path/to/github-mcp-server", "args": ["stdio"],
+  "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "..." } }
+```
 
 `JIDOKA_DB` and `JIDOKA_EXTENSIONS_DIR` are resolved relative to the process's
 current working directory at launch, not to wherever the `jidoka`/`jidoka.exe`

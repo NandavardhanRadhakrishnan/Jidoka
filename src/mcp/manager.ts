@@ -33,7 +33,11 @@ export class McpManager {
       try {
         const client = new Client({ name: "jidoka", version: "0.1.0" });
         await client.connect(
-          new StdioClientTransport({ command: config.command, args: config.args }),
+          new StdioClientTransport({
+            command: config.command,
+            args: config.args,
+            ...(config.env ? { env: config.env } : {}),
+          }),
         );
         this.addClient(config.name, client as unknown as McpLike);
       } catch (error) {

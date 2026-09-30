@@ -8,11 +8,17 @@ import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprot
 const server = new Server({ name: "fixture", version: "0.1.0" }, { capabilities: { tools: {} } });
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: [{ name: "ping", description: "ping", inputSchema: { type: "object" } }],
+  tools: [
+    { name: "ping", description: "ping", inputSchema: { type: "object" } },
+    { name: "echo-env", description: "echoes FIXTURE_ECHO_VAR", inputSchema: { type: "object" } },
+  ],
 }));
 
-server.setRequestHandler(CallToolRequestSchema, async () => ({
-  content: [{ type: "text", text: "pong" }],
-}));
+server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  if (request.params.name === "echo-env") {
+    return { content: [{ type: "text", text: process.env.FIXTURE_ECHO_VAR ?? "unset" }] };
+  }
+  return { content: [{ type: "text", text: "pong" }] };
+});
 
 await server.connect(new StdioServerTransport());

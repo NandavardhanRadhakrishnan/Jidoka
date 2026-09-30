@@ -104,3 +104,30 @@ test("connectAll does not reject when one server fails to connect, and still con
   const tools = manager.listTools();
   expect(tools.some((t) => t.name === "good__ping")).toBe(true);
 }, 15000);
+
+test("connectAll passes each server's configured env through to its subprocess", async () => {
+  const manager = new McpManager();
+  const fixture = path.join(import.meta.dir, "fixtures", "fake-stdio-server.ts");
+
+  await manager.connectAll([
+    {
+      name: "fixture",
+      command: process.execPath,
+      args: ["run", fixture],
+      env: { FIXTURE_ECHO_VAR: "hello-from-config" },
+    },
+  ]);
+
+  const result = await manager.callTool("fixture", "echo-env", {});
+  expect(result).toBe("hello-from-config");
+}, 15000);
+
+test("a server with no configured env still connects (no env is optional, not required)", async () => {
+  const manager = new McpManager();
+  const fixture = path.join(import.meta.dir, "fixtures", "fake-stdio-server.ts");
+
+  await manager.connectAll([{ name: "fixture", command: process.execPath, args: ["run", fixture] }]);
+
+  const result = await manager.callTool("fixture", "echo-env", {});
+  expect(result).toBe("unset");
+}, 15000);
