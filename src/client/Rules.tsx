@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type Rule, type TypeWithRules } from "./api";
 import { RuleEditor } from "./RuleEditor";
+import { SelectTrigger } from "./SelectTrigger";
 import { PRIORITIES, type Priority } from "../domain/priority";
 
 function statusOf(type: TypeWithRules): string {
@@ -187,22 +188,24 @@ export function Rules() {
           <div className="type-detail-head">
             <h4 style={{ margin: 0 }}>{selected.name}</h4>
             <span className="tag tag-accent">{statusOf(selected)}</span>
-            <select
-              className="inline-select"
-              aria-label="Default priority"
-              title="Every task of this type starts at this priority; triage can raise a task above it, never below"
-              style={{ marginLeft: "auto" }}
-              value={selected.defaultPriority}
-              onChange={(e) =>
-                void api.patchType(selected.id, { defaultPriority: e.target.value as Priority }).then(refresh)
-              }
-            >
-              {PRIORITIES.map((p) => (
-                <option key={p} value={p}>
-                  default priority: {p}
-                </option>
-              ))}
-            </select>
+            <span style={{ marginLeft: "auto" }}>
+              <SelectTrigger
+                label="default priority"
+                display={<span className="mono">{selected.defaultPriority.toUpperCase()}</span>}
+                value={selected.defaultPriority}
+                onChange={(value) =>
+                  void api.patchType(selected.id, { defaultPriority: value as Priority }).then(refresh)
+                }
+                ariaLabel="Default priority"
+                title="Every task of this type starts at this priority; triage can raise a task above it, never below"
+              >
+                {PRIORITIES.map((p) => (
+                  <option key={p} value={p}>
+                    {p[0]!.toUpperCase() + p.slice(1)}
+                  </option>
+                ))}
+              </SelectTrigger>
+            </span>
             <span>
               <MergeTypeControl
                 key={selected.id}

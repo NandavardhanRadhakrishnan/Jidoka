@@ -6,6 +6,7 @@ import { api, type HandoffTarget } from "./api";
 import { Handoff, openUrlTargets } from "./Handoff";
 import { daysUntil, deadlineUrgency, priorityBadge, taskAge } from "./columns";
 import { Icon } from "./icons";
+import { SelectTrigger } from "./SelectTrigger";
 
 interface StepLogEntry {
   stepId: string;
@@ -621,23 +622,31 @@ function PriorityControl({ task, onChanged }: { task: Task; onChanged: () => Pro
   }
 
   return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }} title={urgency && !pinned ? `raised by triage: ${urgency.reason}` : undefined}>
-      {badge && <span className={`priority-badge ${badge.cls}`}>{badge.label}</span>}
-      <select
-        className="inline-select"
-        aria-label="Priority"
-        value={pinned ? task.priority : "auto"}
-        disabled={busy}
-        onChange={(e) => void change(e.target.value)}
-      >
-        <option value="auto">priority: auto ({task.priority})</option>
-        {PRIORITIES.map((p) => (
-          <option key={p} value={p}>
-            priority: {p}
-          </option>
-        ))}
-      </select>
-    </span>
+    <SelectTrigger
+      label="priority"
+      display={
+        <>
+          {badge ? (
+            <span className={`priority-badge ${badge.cls}`}>{badge.label}</span>
+          ) : (
+            <span className="mono">NORMAL</span>
+          )}
+          {!pinned && <span className="mono select-trigger-hint">AUTO</span>}
+        </>
+      }
+      value={pinned ? task.priority : "auto"}
+      onChange={(value) => void change(value)}
+      ariaLabel="Priority"
+      title={urgency && !pinned ? `Raised by triage: ${urgency.reason}` : undefined}
+      disabled={busy}
+    >
+      <option value="auto">Auto: type default, raised by triage ({task.priority})</option>
+      {PRIORITIES.map((p) => (
+        <option key={p} value={p}>
+          {p[0]!.toUpperCase() + p.slice(1)}
+        </option>
+      ))}
+    </SelectTrigger>
   );
 }
 
