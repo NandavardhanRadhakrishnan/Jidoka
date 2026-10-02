@@ -26,6 +26,8 @@ export interface Settings {
   extensionsDir?: string;
   pollIntervalMs?: number;
   terminalCommand?: string;
+  /** Days to keep audit-log entries; 0 keeps them forever. */
+  auditRetentionDays?: number;
 }
 
 export const SettingsSchema = z.object({
@@ -52,4 +54,5 @@ export const SettingsSchema = z.object({
   extensionsDir: z.string().optional(),
   pollIntervalMs: z.number().int().positive().optional(),
   terminalCommand: z.string().optional(),
+  auditRetentionDays: z.number().int().min(0).optional(),
 });

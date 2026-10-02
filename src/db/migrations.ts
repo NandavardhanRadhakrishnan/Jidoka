@@ -87,4 +87,16 @@ export const MIGRATIONS: string[] = [
    )`,
   `ALTER TABLE tasks ADD COLUMN priority TEXT NOT NULL DEFAULT 'normal'`,
   `ALTER TABLE task_types ADD COLUMN default_priority TEXT NOT NULL DEFAULT 'normal'`,
+  `CREATE TABLE IF NOT EXISTS audit_log (
+     id TEXT PRIMARY KEY,
+     at TEXT NOT NULL,
+     kind TEXT NOT NULL,
+     actor TEXT NOT NULL,
+     task_id TEXT,
+     type_id TEXT,
+     rule_id TEXT,
+     data TEXT NOT NULL DEFAULT '{}'
+   )`,
+  `CREATE INDEX IF NOT EXISTS audit_log_task ON audit_log (task_id, at)`,
+  `CREATE INDEX IF NOT EXISTS audit_log_at ON audit_log (at)`,
 ];

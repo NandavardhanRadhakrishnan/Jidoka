@@ -29,6 +29,7 @@ interface EffectiveSettings {
   extensionsDir: string;
   pollIntervalMs: number;
   terminalCommand?: string;
+  auditRetentionDays: number;
 }
 
 function maskAi(ai: Settings["ai"]): MaskedAi | undefined {
@@ -55,6 +56,7 @@ function effectiveOf(config: Config): EffectiveSettings {
     extensionsDir: config.extensionsDir,
     pollIntervalMs: config.pollIntervalMs,
     terminalCommand: config.terminalCommand,
+    auditRetentionDays: config.auditRetentionDays,
   };
 }
 

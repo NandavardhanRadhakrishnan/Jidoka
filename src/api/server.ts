@@ -8,6 +8,7 @@ import { findTaskBySource, getTask, insertTask, listTasks } from "../repo/tasks"
 import { getTaskType, listTaskTypes, mergeTaskType, updateTaskType } from "../repo/taskTypes";
 import { getActiveRule, getRule, insertRule, listRules } from "../repo/rules";
 import { deleteHint, insertHint, listHintsForRule, listHintsForStep } from "../repo/hints";
+import { listAudit, recordAudit } from "../repo/audit";
 import {
   activateTypeRule,
   completeTask,
@@ -40,6 +41,17 @@ export function createServer(deps: AppDeps, extraRoutes?: Hono): Hono {
   if (extraRoutes) app.route("/", extraRoutes);
 
   app.get("/api/tasks", (c) => c.json({ tasks: listTasks(deps.db) }));
+
+  app.get("/api/audit", (c) => {
+    const taskId = c.req.query("taskId");
+    const limit = Number(c.req.query("limit") ?? 500);
+    return c.json({
+      entries: listAudit(deps.db, {
+        ...(taskId ? { taskId } : {}),
+        limit: Number.isFinite(limit) && limit > 0 ? Math.min(limit, 5000) : 500,
+      }),
+    });
+  });
 
   app.get("/api/models", (c) =>
     c.json({ provider: deps.modelProvider, models: modelCatalog(deps.modelProvider) }),
@@ -201,6 +213,12 @@ export function createServer(deps: AppDeps, extraRoutes?: Hono): Hono {
     if (patch.mergeInto) {
       if (!getTaskType(deps.db, patch.mergeInto)) return c.json({ error: "unknown target" }, 404);
       mergeTaskType(deps.db, id, patch.mergeInto);
+      recordAudit(deps.db, {
+        kind: "type_updated",
+        actor: "human",
+        typeId: id,
+        data: { mergedInto: patch.mergeInto, name: current.name },
+      });
       // Merged-in tasks now sit under the target's default, not their old type's.
       refreshPriorityForType(deps, patch.mergeInto);
       return c.json({ merged: true });
@@ -218,6 +236,14 @@ export function createServer(deps: AppDeps, extraRoutes?: Hono): Hono {
       ...(patch.defaultPriority !== undefined ? { defaultPriority: patch.defaultPriority as Priority } : {}),
     });
     if (updated.defaultPriority !== current.defaultPriority) refreshPriorityForType(deps, id);
+    const changes = Object.fromEntries(
+      (["name", "description", "defaultPriority"] as const)
+        .filter((field) => updated[field] !== current[field])
+        .map((field) => [field, { from: current[field], to: updated[field] }]),
+    );
+    if (Object.keys(changes).length) {
+      recordAudit(deps.db, { kind: "type_updated", actor: "human", typeId: id, data: { changes } });
+    }
     if (descriptionChanged) {
       // Can take seconds per open task (a real AI call each) — respond now
       // and let the board poll for tasks moving, same as ingestion.
@@ -272,7 +298,9 @@ export function createServer(deps: AppDeps, extraRoutes?: Hono): Hono {
     }
 
     // Waiting tasks are processed after the response; the board shows them move.
-    return c.json({ rule: await activateTypeRule(deps, id, { background: true }) });
+    return c.json({
+      rule: await activateTypeRule(deps, id, { background: true, acknowledgedWriteTools: required }),
+    });
   });
 
   app.get("/api/mcp/tools", (c) => c.json({ tools: deps.mcp.listTools() }));

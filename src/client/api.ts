@@ -23,6 +23,7 @@ export interface EffectiveSettings {
   extensionsDir: string;
   pollIntervalMs: number;
   terminalCommand?: string;
+  auditRetentionDays: number;
 }
 
 export interface SettingsPatch {
@@ -33,6 +34,7 @@ export interface SettingsPatch {
   extensionsDir?: string;
   pollIntervalMs?: number;
   terminalCommand?: string;
+  auditRetentionDays?: number;
 }
 
 export type HandoffTarget =

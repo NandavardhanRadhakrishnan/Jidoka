@@ -111,3 +111,23 @@ test("PATCH accepts a well-formed body", async () => {
 
   expect(response.status).toBe(200);
 });
+
+test("audit retention defaults to 0 (keep forever) and can be set to a number of days", async () => {
+  const { fetch } = freshApp();
+  const get = async () =>
+    ((await (await fetch(new Request("http://localhost/api/settings"))).json()) as { effective: { auditRetentionDays: number } })
+      .effective.auditRetentionDays;
+  const patch = (body: unknown) =>
+    fetch(
+      new Request("http://localhost/api/settings", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    );
+
+  expect(await get()).toBe(0);
+  expect((await patch({ auditRetentionDays: 180 })).status).toBe(200);
+  expect(await get()).toBe(180);
+  expect((await patch({ auditRetentionDays: -1 })).status).toBe(400);
+});

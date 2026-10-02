@@ -44,6 +44,8 @@ export interface Config {
    * commands can only be copied, never launched by the server.
    */
   terminalCommand?: string;
+  /** Days to keep audit-log entries; 0 keeps them forever. Settings-only, no env var. */
+  auditRetentionDays: number;
   agent: {
     /**
      * Who runs an `agent` step's tool loop. "in-process" uses the AiProvider and
@@ -83,6 +85,7 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
     sampleDir: env.JIDOKA_SAMPLE_DIR,
     extensionsDir: env.JIDOKA_EXTENSIONS_DIR ?? "./extensions",
     terminalCommand: env.JIDOKA_TERMINAL,
+    auditRetentionDays: 0,
     agent: {
       // Model calls on the CLI imply agent steps on the CLI too, unless overridden.
       runner:
@@ -121,5 +124,6 @@ export function applySettings(base: Config, settings: Settings): Config {
     extensionsDir: settings.extensionsDir ?? base.extensionsDir,
     pollIntervalMs: settings.pollIntervalMs ?? base.pollIntervalMs,
     terminalCommand: settings.terminalCommand ?? base.terminalCommand,
+    auditRetentionDays: settings.auditRetentionDays ?? base.auditRetentionDays,
   };
 }

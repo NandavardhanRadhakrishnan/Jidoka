@@ -21,6 +21,7 @@ export function saveSettings(db: Database, patch: Settings): Settings {
     extensionsDir: patch.extensionsDir ?? current.extensionsDir,
     pollIntervalMs: patch.pollIntervalMs ?? current.pollIntervalMs,
     terminalCommand: patch.terminalCommand ?? current.terminalCommand,
+    auditRetentionDays: patch.auditRetentionDays ?? current.auditRetentionDays,
   };
   const clean = Object.fromEntries(
     Object.entries(merged).filter(([, value]) => value !== undefined),

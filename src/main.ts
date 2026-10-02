@@ -20,6 +20,7 @@ import { createSampleFolderSource } from "./sources/sample/folder";
 import type { TaskSource } from "./sources/types";
 import { loadEnabledExtensionSources } from "./extensions/runtime";
 import { getSettings } from "./repo/settings";
+import { purgeExpiredAudit } from "./repo/audit";
 
 export interface App {
   deps: AppDeps;
@@ -186,6 +187,16 @@ if (import.meta.main) {
         "or add tasks from the board",
     );
   }
+
+  // Retention is read live from settings each run, so changing it in the
+  // Settings screen takes effect on the next sweep without a restart.
+  const sweepAudit = () => {
+    const days = applySettings(config, getSettings(app.deps.db)).auditRetentionDays;
+    const removed = purgeExpiredAudit(app.deps.db, days);
+    if (removed) console.log(`Audit log: removed ${removed} entries older than ${days} days`);
+  };
+  sweepAudit();
+  setInterval(sweepAudit, 24 * 60 * 60 * 1000);
 
   Bun.serve({
     port: app.config.port,

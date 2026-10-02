@@ -5,6 +5,7 @@ import { insertTaskType } from "../../src/repo/taskTypes";
 import { insertRule, activateRule } from "../../src/repo/rules";
 import { insertHint, listHintsForRule, listHintsForStep } from "../../src/repo/hints";
 import { createServer } from "../../src/api/server";
+import { listAudit } from "../../src/repo/audit";
 import type { AppDeps } from "../../src/orchestrator";
 import type { AiProvider, ToolSpec } from "../../src/ai/provider";
 
@@ -1006,4 +1007,62 @@ test("PATCH /api/types/:id with a new defaultPriority re-prioritises that type's
   expect(response.status).toBe(200);
   expect(getTask(deps.db, task.id)?.priority).toBe("high");
   expect((await patch({ defaultPriority: "P1" })).status).toBe(400);
+});
+
+test("GET /api/audit returns a task's trail, newest first", async () => {
+  const { deps, fetch } = app();
+  const task = insertTask(deps.db, { sourceId: "s", externalId: "x", title: "t", body: "b" });
+  updateTask(deps.db, task.id, { state: "assigned_human" });
+
+  const response = await fetch(new Request(`http://localhost/api/audit?taskId=${task.id}`));
+  const body = (await response.json()) as { entries: { kind: string }[] };
+
+  expect(response.status).toBe(200);
+  expect(body.entries.map((e) => e.kind)).toEqual(["state_changed", "ingested"]);
+});
+
+test("activating a rule records the write tools the human acknowledged", async () => {
+  const writeTool: ToolSpec = { name: "files__write_file", description: "", inputSchema: {}, annotations: { readOnlyHint: false } };
+  const { deps, fetch } = app([], [writeTool]);
+  const type = insertTaskType(deps.db, { name: "Filer", description: "d" });
+  const rule = insertRule(deps.db, {
+    typeId: type.id,
+    definition: {
+      steps: [
+        { id: "s1", type: "agent", prompt: "p", tools: ["files__write_file"], maxIterations: 6, output: "o" },
+        { id: "s2", type: "assign", to: "human" },
+      ],
+    },
+  });
+
+  await fetch(
+    new Request(`http://localhost/api/rules/${rule.id}/activate`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ acknowledgedWriteTools: ["files__write_file"] }),
+    }),
+  );
+
+  const entry = listAudit(deps.db).find((e) => e.kind === "rule_activated");
+  expect(entry?.data.acknowledgedWriteTools).toEqual(["files__write_file"]);
+});
+
+test("PATCH /api/types/:id records what changed on the type", async () => {
+  const { deps, fetch } = app();
+  const type = insertTaskType(deps.db, { name: "Legal letter", description: "d" });
+
+  await fetch(
+    new Request(`http://localhost/api/types/${type.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Legal notice", defaultPriority: "high" }),
+    }),
+  );
+
+  const entry = listAudit(deps.db).find((e) => e.kind === "type_updated");
+  expect(entry).toMatchObject({
+    actor: "human",
+    typeId: type.id,
+    data: { changes: { name: { from: "Legal letter", to: "Legal notice" }, defaultPriority: { from: "normal", to: "high" } } },
+  });
 });

@@ -21,9 +21,12 @@ import {
   retriageOpenTasksForType,
   setTaskPriority,
   refreshPriorityForType,
+  completeTask,
+  reopenTask,
   type AppDeps,
 } from "../src/orchestrator";
 import { insertHint } from "../src/repo/hints";
+import { listAudit } from "../src/repo/audit";
 import type { AiProvider } from "../src/ai/provider";
 import type { AgentRunInput, AgentRunner } from "../src/agent/runner";
 
@@ -1232,4 +1235,150 @@ test("changing a type's default re-prioritises its open tasks but not done or ha
   expect(getTask(db, open.id)?.priority).toBe("high");
   expect(getTask(db, done.id)?.priority).toBe("normal");
   expect(getTask(db, handSet.id)?.priority).toBe("low");
+});
+
+function auditKinds(db: ReturnType<typeof freshDb>, taskId: string, kind: string) {
+  return listAudit(db, { taskId }).filter((e) => e.kind === kind);
+}
+
+test("triage is audited with its outcome, deadline and urgency", async () => {
+  const db = freshDb();
+  const type = insertTaskType(db, { name: "Customer email", description: "d" });
+  const task = insertTask(db, sample);
+  const app = deps(db, [
+    JSON.stringify({
+      scores: [{ typeId: type.id, confidence: 0.95 }],
+      proposal: null,
+      deadline: "2026-02-01",
+      urgency: { level: "high", reason: "escalated" },
+    }),
+  ]);
+
+  await onTaskIngested(app, task);
+
+  const [entry] = auditKinds(db, task.id, "triaged");
+  expect(entry).toMatchObject({
+    actor: "system",
+    typeId: type.id,
+    data: {
+      outcome: { kind: "matched", typeId: type.id },
+      deadline: "2026-02-01",
+      urgency: { level: "high", reason: "escalated" },
+      priority: "high",
+    },
+  });
+});
+
+test("a rule run is audited with the rule version, step log and resulting assignee", async () => {
+  const db = freshDb();
+  const type = insertTaskType(db, { name: "Customer email", description: "d" });
+  const rule = insertRule(db, {
+    typeId: type.id,
+    definition: {
+      steps: [
+        { id: "s1", type: "ai", prompt: "Summarize {{task.body}}", output: "summary" },
+        { id: "s2", type: "assign", to: "human" },
+      ],
+    },
+  });
+  activateRule(db, rule.id);
+  const task = insertTask(db, sample);
+  const app = deps(db, [JSON.stringify({ scores: [{ typeId: type.id, confidence: 0.95 }], proposal: null }), "Chasing a delivery"]);
+
+  await onTaskIngested(app, task);
+
+  const [entry] = auditKinds(db, task.id, "rule_ran");
+  expect(entry).toMatchObject({ ruleId: rule.id, typeId: type.id, data: { version: rule.version, assignee: "human" } });
+  expect((entry!.data.log as { stepId: string }[]).map((l) => l.stepId)).toEqual(["s1", "s2"]);
+});
+
+test("a failing rule run is audited with its error", async () => {
+  const db = freshDb();
+  const type = insertTaskType(db, { name: "Customer email", description: "d" });
+  activateRule(
+    db,
+    insertRule(db, {
+      typeId: type.id,
+      definition: { steps: [{ id: "s1", type: "call_rule", typeId: "ghost", version: 1 }, { id: "s2", type: "assign", to: "human" }] },
+    }).id,
+  );
+  const task = updateTask(db, insertTask(db, sample).id, { typeId: type.id });
+
+  const result = await runRuleForTask(deps(db, []), task);
+
+  expect(result.state).toBe("failed");
+  expect(auditKinds(db, task.id, "rule_ran")[0]?.data.error).toBeString();
+});
+
+test("human decisions are audited with the human as actor", async () => {
+  const db = freshDb();
+  const a = insertTaskType(db, { name: "Customer email", description: "d" });
+  const b = insertTaskType(db, { name: "Internal request", description: "d" });
+  const task = insertTask(db, sample);
+  const app = deps(db, [
+    JSON.stringify({ scores: [{ typeId: a.id, confidence: 0.7 }, { typeId: b.id, confidence: 0.65 }], proposal: null }),
+  ]);
+  await onTaskIngested(app, task);
+
+  await confirmTaskType(app, task.id, b.id);
+  await skipOnboarding(app, task.id);
+  setTaskPriority(app, task.id, "urgent");
+  completeTask(app, task.id, "replied by phone");
+  reopenTask(app, task.id);
+
+  const human = listAudit(db, { taskId: task.id }).filter((e) => e.actor === "human").reverse();
+  expect(human.map((e) => e.kind)).toEqual([
+    "type_confirmed",
+    "onboarding_skipped",
+    "priority_set",
+    "completed",
+    "reopened",
+  ]);
+  expect(human[0]!.data).toEqual({ typeId: b.id, candidates: [a.id, b.id] });
+  expect(human[2]!.data).toEqual({ from: "normal", to: "urgent" });
+  expect(human[3]!.data).toEqual({ note: "replied by phone" });
+});
+
+test("merging a duplicate is audited against both tasks and survives the duplicate's deletion", () => {
+  const db = freshDb();
+  const kept = updateTask(db, insertTask(db, sample).id, { state: "assigned_human" });
+  const dup = updateTask(db, insertTask(db, { ...sample, externalId: "m2" }).id, { state: "assigned_human" });
+
+  markDuplicate(deps(db, []), dup.id, kept.id);
+
+  expect(auditKinds(db, dup.id, "merged")[0]).toMatchObject({ actor: "human", data: { intoTaskId: kept.id } });
+  expect(auditKinds(db, kept.id, "merged")[0]).toMatchObject({ actor: "human", data: { duplicateTaskId: dup.id } });
+});
+
+test("rule activation is audited with the acknowledged write tools", async () => {
+  const db = freshDb();
+  const type = insertTaskType(db, { name: "Customer email", description: "d" });
+  const rule = insertRule(db, { typeId: type.id, definition: { steps: [{ id: "s1", type: "assign", to: "human" }] } });
+
+  await activateTypeRule(deps(db, []), rule.id, { acknowledgedWriteTools: ["gh__add_comment"] });
+
+  const entry = listAudit(db).find((e) => e.kind === "rule_activated");
+  expect(entry).toMatchObject({
+    actor: "human",
+    ruleId: rule.id,
+    typeId: type.id,
+    data: { version: rule.version, acknowledgedWriteTools: ["gh__add_comment"] },
+  });
+});
+
+test("an AI worker finishing a task is audited with the AI as actor", async () => {
+  const db = freshDb();
+  const type = insertTaskType(db, { name: "Customer email", description: "d" });
+  activateRule(db, insertRule(db, { typeId: type.id, definition: { steps: [{ id: "s1", type: "assign", to: "ai" }] } }).id);
+  const task = insertTask(db, sample);
+  const runAgent: AgentRunner = { id: "stub", async run() { return { text: "Handled.", toolCalls: [] }; } };
+  const app: AppDeps = {
+    ...deps(db, [JSON.stringify({ scores: [{ typeId: type.id, confidence: 0.95 }], proposal: null })]),
+    runAgent,
+  };
+
+  await onTaskIngested(app, task);
+  await Bun.sleep(10);
+
+  expect(auditKinds(db, task.id, "completed")[0]).toMatchObject({ actor: "ai", data: { note: "Handled." } });
 });

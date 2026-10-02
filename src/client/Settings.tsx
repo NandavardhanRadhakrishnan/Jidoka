@@ -36,6 +36,7 @@ export function Settings() {
   const [extensionsDir, setExtensionsDir] = useState("");
   const [pollIntervalMs, setPollIntervalMs] = useState(60000);
   const [terminalCommand, setTerminalCommand] = useState("");
+  const [auditRetentionDays, setAuditRetentionDays] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -57,6 +58,7 @@ export function Settings() {
       setExtensionsDir(effective.extensionsDir);
       setPollIntervalMs(effective.pollIntervalMs);
       setTerminalCommand(effective.terminalCommand ?? "");
+      setAuditRetentionDays(effective.auditRetentionDays);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -89,6 +91,7 @@ export function Settings() {
         extensionsDir: extensionsDir.trim(),
         pollIntervalMs,
         ...(terminalCommand.trim() ? { terminalCommand: terminalCommand.trim() } : {}),
+        auditRetentionDays,
       };
       const nextEffective = await api.saveSettings(patch);
       setEffective(nextEffective);
@@ -244,6 +247,25 @@ export function Settings() {
           <div className="field">
             <label>Terminal launcher</label>
             <input className="input mono" value={terminalCommand} onChange={(e) => setTerminalCommand(e.target.value)} />
+          </div>
+        </div>
+      </section>
+
+      <hr className="hr" />
+
+      <section>
+        <h6>Audit log</h6>
+        <div className="settings-grid">
+          <div className="field">
+            <label>Keep entries for (days, 0 = forever)</label>
+            <input
+              className="input mono"
+              type="number"
+              min={0}
+              step={1}
+              value={auditRetentionDays}
+              onChange={(e) => setAuditRetentionDays(Math.max(0, Math.floor(Number(e.target.value) || 0)))}
+            />
           </div>
         </div>
       </section>

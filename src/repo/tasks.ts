@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { NewTask, Task, TaskPatch } from "../domain/task";
+import { recordAudit } from "./audit";
 
 interface Row {
   id: string;
@@ -67,6 +68,12 @@ export function insertTask(db: Database, input: NewTask): Task {
   );
   const task = getTask(db, id);
   if (!task) throw new Error(`insertTask: task ${id} vanished`);
+  recordAudit(db, {
+    kind: "ingested",
+    actor: "system",
+    taskId: id,
+    data: { sourceId: input.sourceId, externalId: input.externalId, title: input.title },
+  });
   return task;
 }
 
@@ -116,6 +123,17 @@ export function updateTask(db: Database, id: string, patch: TaskPatch): Task {
     next.updatedAt,
     id,
   );
+  // Recorded here rather than at each call site so no path that moves a task
+  // can skip the trail — the orchestrator adds the intent (who/why) separately.
+  if (next.state !== current.state) {
+    recordAudit(db, {
+      kind: "state_changed",
+      actor: "system",
+      taskId: id,
+      typeId: next.typeId,
+      data: { from: current.state, to: next.state, assignee: next.assignee },
+    });
+  }
   return next;
 }
 

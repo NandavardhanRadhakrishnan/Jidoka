@@ -7,6 +7,7 @@ import type { Rule } from "./domain/rule";
 import { resolvePriority, type Priority } from "./domain/priority";
 import { getTask, listTasks, updateTask, deleteTask } from "./repo/tasks";
 import { recordMergedSourceItem } from "./repo/mergedSourceItems";
+import { recordAudit } from "./repo/audit";
 import {
   getTaskType,
   insertTaskType,
@@ -86,18 +87,36 @@ export async function onTaskIngested(deps: AppDeps, task: Task): Promise<Task> {
  *  for a brand new task (which has no prior classification to compare against)
  *  and, via `retriageTask` below, for an already-classified one whose triage
  *  outcome turned out to differ from what it already had. */
+function auditTriage(deps: AppDeps, task: Task, result: TriageResult, extra: Record<string, unknown> = {}): void {
+  recordAudit(deps.db, {
+    kind: "triaged",
+    actor: "system",
+    taskId: task.id,
+    typeId: task.typeId,
+    data: {
+      outcome: result.outcome,
+      deadline: result.deadline,
+      urgency: result.urgency,
+      priority: task.priority,
+      ...extra,
+    },
+  });
+}
+
 async function applyTriageOutcome(deps: AppDeps, task: Task, result: TriageResult): Promise<Task> {
   const { outcome, deadline } = result;
   const context = withUrgency(task.context, result.urgency);
 
   if (outcome.kind === "ambiguous") {
-    return updateTask(deps.db, task.id, {
+    const waiting = updateTask(deps.db, task.id, {
       state: "needs_type_confirmation",
       typeCandidates: outcome.candidateTypeIds,
       deadline,
       context,
       priority: autoPriority(deps, { ...task, typeId: null, context }),
     });
+    auditTriage(deps, waiting, result);
+    return waiting;
   }
 
   if (outcome.kind === "new_type") {
@@ -105,7 +124,7 @@ async function applyTriageOutcome(deps: AppDeps, task: Task, result: TriageResul
       name: outcome.proposal.name,
       description: outcome.proposal.description,
     });
-    return updateTask(deps.db, task.id, {
+    const proposed = updateTask(deps.db, task.id, {
       typeId: type.id,
       typeCandidates: null,
       state: "needs_onboarding",
@@ -113,6 +132,8 @@ async function applyTriageOutcome(deps: AppDeps, task: Task, result: TriageResul
       context,
       priority: autoPriority(deps, { ...task, typeId: type.id, context }),
     });
+    auditTriage(deps, proposed, result);
+    return proposed;
   }
 
   const matched = updateTask(deps.db, task.id, {
@@ -122,6 +143,7 @@ async function applyTriageOutcome(deps: AppDeps, task: Task, result: TriageResul
     context,
     priority: autoPriority(deps, { ...task, typeId: outcome.typeId, context }),
   });
+  auditTriage(deps, matched, result);
   return processTask(deps, matched);
 }
 
@@ -148,14 +170,24 @@ export function setTaskPriority(deps: AppDeps, taskId: string, priority: Priorit
   const task = getTask(deps.db, taskId);
   if (!task) throw new Error(`setTaskPriority: unknown task ${taskId}`);
 
+  let updated: Task;
   if (priority === "auto") {
     const { priorityOverride: _pin, ...context } = task.context;
-    return updateTask(deps.db, taskId, { context, priority: autoPriority(deps, { ...task, context }) });
+    updated = updateTask(deps.db, taskId, { context, priority: autoPriority(deps, { ...task, context }) });
+  } else {
+    updated = updateTask(deps.db, taskId, {
+      priority,
+      context: { ...task.context, priorityOverride: true },
+    });
   }
-  return updateTask(deps.db, taskId, {
-    priority,
-    context: { ...task.context, priorityOverride: true },
+  recordAudit(deps.db, {
+    kind: "priority_set",
+    actor: "human",
+    taskId,
+    typeId: task.typeId,
+    data: { from: task.priority, to: updated.priority, ...(priority === "auto" ? { auto: true } : {}) },
   });
+  return updated;
 }
 
 /** Runs when a type's default priority changes (or tasks are merged into
@@ -182,6 +214,7 @@ async function triageAndAssign(deps: AppDeps, task: Task): Promise<Task> {
 export async function retriageTask(deps: AppDeps, task: Task): Promise<Task> {
   const result = await triageTask(deps.provider, task, listTaskTypes(deps.db));
   if (result.outcome.kind === "matched" && result.outcome.typeId === task.typeId) {
+    auditTriage(deps, task, result, { retriage: true, unchanged: true });
     return task;
   }
   return applyTriageOutcome(deps, task, result);
@@ -248,6 +281,19 @@ export async function runRuleForTask(
       assignee: result.assignee,
       state: result.assignee === "ai" ? "assigned_ai" : "assigned_human",
     });
+    recordAudit(deps.db, {
+      kind: "rule_ran",
+      actor: "system",
+      taskId: task.id,
+      typeId: active.typeId,
+      ruleId: active.id,
+      data: {
+        version: active.version,
+        log: result.log,
+        assignee: result.assignee,
+        ...(result.handoff ? { handoff: result.handoff } : {}),
+      },
+    });
 
     // An agent step can run for minutes, so this — like triage and rule
     // activation elsewhere in this file — fires in the background rather
@@ -261,6 +307,14 @@ export async function runRuleForTask(
     return updated;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    recordAudit(deps.db, {
+      kind: "rule_ran",
+      actor: "system",
+      taskId: task.id,
+      typeId: active.typeId,
+      ruleId: active.id,
+      data: { version: active.version, error: message },
+    });
     return updateTask(deps.db, task.id, {
       state: "failed",
       context: { ...running.context, error: message },
@@ -303,6 +357,13 @@ async function completeAiAssignedTask(
     // — the same hazard mergeTasks already guards against for a concurrent
     // rule run.
     if (!current || current.state !== "assigned_ai") return;
+    recordAudit(deps.db, {
+      kind: "completed",
+      actor: "ai",
+      taskId: task.id,
+      typeId: current.typeId,
+      data: { note: result.text.trim() || null },
+    });
     updateTask(deps.db, task.id, {
       state: "done",
       context: {
@@ -336,6 +397,14 @@ export async function rerunStep(deps: AppDeps, taskId: string, stepId: string): 
     stepId,
   );
 
+  recordAudit(deps.db, {
+    kind: "step_rerun",
+    actor: "human",
+    taskId,
+    typeId: task.typeId,
+    ruleId: active.id,
+    data: { stepId, version: active.version, log: result.log },
+  });
   return updateTask(deps.db, taskId, {
     context: {
       ...task.context,
@@ -371,6 +440,13 @@ export async function confirmTaskType(
   if (!type) throw new Error(`confirmTaskType: unknown type ${typeId}`);
 
   updateTaskType(deps.db, typeId, { examples: [...type.examples, task.title] });
+  recordAudit(deps.db, {
+    kind: "type_confirmed",
+    actor: "human",
+    taskId,
+    typeId,
+    data: { typeId, candidates: task.typeCandidates },
+  });
   const updated = updateTask(deps.db, taskId, {
     typeId,
     typeCandidates: null,
@@ -414,13 +490,20 @@ export async function processWaitingTasks(deps: AppDeps, rule: Rule): Promise<vo
 export async function activateTypeRule(
   deps: AppDeps,
   ruleId: string,
-  options: { background?: boolean } = {},
+  options: { background?: boolean; acknowledgedWriteTools?: string[] } = {},
 ): Promise<Rule> {
   const rule = getRule(deps.db, ruleId);
   if (!rule) throw new Error(`activateTypeRule: unknown rule ${ruleId}`);
 
   const active = activateRule(deps.db, ruleId);
   updateTaskType(deps.db, rule.typeId, { status: "active" });
+  recordAudit(deps.db, {
+    kind: "rule_activated",
+    actor: "human",
+    typeId: rule.typeId,
+    ruleId,
+    data: { version: active.version, acknowledgedWriteTools: options.acknowledgedWriteTools ?? [] },
+  });
 
   // A rule with an agent step can run for minutes, far longer than an HTTP
   // request should be held open, so callers over HTTP process in the background
@@ -440,6 +523,13 @@ export async function activateTypeRule(
 export function completeTask(deps: AppDeps, taskId: string, note?: string): Task {
   const task = getTask(deps.db, taskId);
   if (!task) throw new Error(`completeTask: unknown task ${taskId}`);
+  recordAudit(deps.db, {
+    kind: "completed",
+    actor: "human",
+    taskId,
+    typeId: task.typeId,
+    data: { note: note?.trim() || null },
+  });
 
   return updateTask(deps.db, taskId, {
     state: "done",
@@ -455,6 +545,7 @@ export function completeTask(deps: AppDeps, taskId: string, note?: string): Task
 export function reopenTask(deps: AppDeps, taskId: string): Task {
   const task = getTask(deps.db, taskId);
   if (!task) throw new Error(`reopenTask: unknown task ${taskId}`);
+  recordAudit(deps.db, { kind: "reopened", actor: "human", taskId, typeId: task.typeId, data: {} });
 
   const { completedAt: _completedAt, completionNote: _note, ...context } = task.context;
   return updateTask(deps.db, taskId, {
@@ -531,6 +622,7 @@ export async function onTaskChanged(deps: AppDeps, task: Task, item: RawItem): P
 export async function skipOnboarding(deps: AppDeps, taskId: string): Promise<Task> {
   const task = getTask(deps.db, taskId);
   if (!task) throw new Error(`skipOnboarding: unknown task ${taskId}`);
+  recordAudit(deps.db, { kind: "onboarding_skipped", actor: "human", taskId, typeId: task.typeId, data: {} });
   return updateTask(deps.db, taskId, { state: "assigned_human", assignee: "human" });
 }
 
@@ -579,6 +671,22 @@ export function mergeTasks(deps: AppDeps, duplicateTaskId: string, intoTaskId: s
   // the bundled sample folder source) would otherwise rediscover it on the
   // next tick and re-ingest it as a brand-new task, undoing the merge.
   recordMergedSourceItem(deps.db, duplicate.sourceId, duplicate.externalId);
+  // One entry on each side, so the trail is findable from either task — the
+  // duplicate's own entry outlives its row (audit_log has no foreign keys).
+  recordAudit(deps.db, {
+    kind: "merged",
+    actor: "human",
+    taskId: duplicate.id,
+    typeId: duplicate.typeId,
+    data: { intoTaskId: target.id, sourceId: duplicate.sourceId, externalId: duplicate.externalId },
+  });
+  recordAudit(deps.db, {
+    kind: "merged",
+    actor: "human",
+    taskId: target.id,
+    typeId: target.typeId,
+    data: { duplicateTaskId: duplicate.id, sourceId: duplicate.sourceId, externalId: duplicate.externalId },
+  });
   deleteTask(deps.db, duplicate.id);
   return updated;
 }
@@ -599,6 +707,13 @@ export async function resolveDuplicate(deps: AppDeps, taskId: string, isDuplicat
     return mergeTasks(deps, task.id, task.dedupCandidateId);
   }
 
+  recordAudit(deps.db, {
+    kind: "duplicate_dismissed",
+    actor: "human",
+    taskId,
+    typeId: task.typeId,
+    data: { candidateTaskId: task.dedupCandidateId },
+  });
   const cleared = updateTask(deps.db, task.id, { dedupCandidateId: null });
   return triageAndAssign(deps, cleared);
 }

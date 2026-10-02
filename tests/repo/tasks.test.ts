@@ -8,6 +8,7 @@ import {
   updateTask,
   deleteTask,
 } from "../../src/repo/tasks";
+import { listAudit } from "../../src/repo/audit";
 
 function freshDb() {
   const db = openDb(":memory:");
@@ -160,4 +161,25 @@ test("updateTask patches a priority", () => {
   updateTask(db, task.id, { priority: "urgent" });
 
   expect(getTask(db, task.id)?.priority).toBe("urgent");
+});
+
+test("inserting a task records an ingested audit entry with its source reference", () => {
+  const db = freshDb();
+  const task = insertTask(db, sample);
+
+  expect(listAudit(db, { taskId: task.id })).toMatchObject([
+    { kind: "ingested", actor: "system", data: { sourceId: "outlook", externalId: "msg-1" } },
+  ]);
+});
+
+test("every state change is audited with from and to, and a non-state patch is not", () => {
+  const db = freshDb();
+  const task = insertTask(db, sample);
+
+  updateTask(db, task.id, { deadline: "2026-02-01" });
+  updateTask(db, task.id, { state: "assigned_human", assignee: "human" });
+
+  const changes = listAudit(db, { taskId: task.id }).filter((e) => e.kind === "state_changed");
+  expect(changes).toHaveLength(1);
+  expect(changes[0]!.data).toEqual({ from: "ingested", to: "assigned_human", assignee: "human" });
 });
