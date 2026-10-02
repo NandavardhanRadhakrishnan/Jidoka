@@ -961,3 +961,49 @@ test("PATCH /api/types/:id: a description change re-triages open tasks in the ba
   expect(getTask(db, doneTask.id)?.typeId).toBe(type.id);
   expect(getTask(db, doneTask.id)?.state).toBe("done");
 });
+
+test("POST /api/tasks/:id/priority pins a priority by hand and 'auto' unpins it", async () => {
+  const { deps, fetch } = app();
+  const task = insertTask(deps.db, { sourceId: "s", externalId: "x", title: "t", body: "b" });
+  const post = (priority: string) =>
+    fetch(
+      new Request(`http://localhost/api/tasks/${task.id}/priority`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ priority }),
+      }),
+    );
+
+  const pinned = (await (await post("urgent")).json()) as { task: { priority: string; context: Record<string, unknown> } };
+  expect(pinned.task.priority).toBe("urgent");
+  expect(pinned.task.context.priorityOverride).toBe(true);
+
+  const auto = (await (await post("auto")).json()) as { task: { priority: string; context: Record<string, unknown> } };
+  expect(auto.task.priority).toBe("normal");
+  expect(auto.task.context.priorityOverride).toBeUndefined();
+
+  expect((await post("P1")).status).toBe(400);
+});
+
+test("PATCH /api/types/:id with a new defaultPriority re-prioritises that type's open tasks", async () => {
+  const { deps, fetch } = app();
+  const type = insertTaskType(deps.db, { name: "Legal letter", description: "d" });
+  const task = updateTask(deps.db, insertTask(deps.db, { sourceId: "s", externalId: "x", title: "t", body: "b" }).id, {
+    typeId: type.id,
+    state: "assigned_human",
+  });
+  const patch = (body: unknown) =>
+    fetch(
+      new Request(`http://localhost/api/types/${type.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    );
+
+  const response = await patch({ defaultPriority: "high" });
+
+  expect(response.status).toBe(200);
+  expect(getTask(deps.db, task.id)?.priority).toBe("high");
+  expect((await patch({ defaultPriority: "P1" })).status).toBe(400);
+});

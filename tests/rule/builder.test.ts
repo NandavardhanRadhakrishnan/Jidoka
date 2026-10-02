@@ -13,6 +13,7 @@ const type: TaskType = {
   description: "A question from an external customer",
   examples: [],
   status: "proposed",
+  defaultPriority: "normal",
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",
 };

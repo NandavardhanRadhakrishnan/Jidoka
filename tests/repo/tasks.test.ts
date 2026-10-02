@@ -145,3 +145,19 @@ test("updateTask patches state, type, assignee and context", () => {
   expect(updated.updatedAt >= task.updatedAt).toBe(true);
   expect(listTasks(db)).toHaveLength(1);
 });
+
+test("a new task starts at normal priority", () => {
+  const db = freshDb();
+  const task = insertTask(db, sample);
+
+  expect(task.priority).toBe("normal");
+});
+
+test("updateTask patches a priority", () => {
+  const db = freshDb();
+  const task = insertTask(db, sample);
+
+  updateTask(db, task.id, { priority: "urgent" });
+
+  expect(getTask(db, task.id)?.priority).toBe("urgent");
+});

@@ -26,6 +26,7 @@ const task: Task = {
   state: "ingested",
   assignee: null,
   deadline: null,
+  priority: "normal",
   dedupCandidateId: null,
   context: {},
   createdAt: "2026-01-01T00:00:00.000Z",
@@ -39,6 +40,7 @@ function type(id: string, name: string): TaskType {
     description: `${name} description`,
     examples: [],
     status: "active",
+    defaultPriority: "normal",
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
   };
@@ -132,4 +134,37 @@ test("unknown type ids from the model are ignored", async () => {
   const { outcome } = await triageTask(provider, task, [type("a", "Customer email")]);
 
   expect(outcome).toEqual({ kind: "matched", typeId: "a" });
+});
+
+test("an urgency signal in the task is extracted with its reason", async () => {
+  const provider = stub({
+    scores: [{ typeId: "a", confidence: 0.92 }],
+    proposal: null,
+    urgency: { level: "urgent", reason: "threatens legal action by Monday" },
+  });
+
+  const { urgency } = await triageTask(provider, task, [type("a", "Customer email")]);
+
+  expect(urgency).toEqual({ level: "urgent", reason: "threatens legal action by Monday" });
+});
+
+test("no urgency signal leaves it null", async () => {
+  const provider = stub({ scores: [{ typeId: "a", confidence: 0.92 }], proposal: null });
+
+  const { urgency } = await triageTask(provider, task, [type("a", "Customer email")]);
+
+  expect(urgency).toBeNull();
+});
+
+test("an urgency level outside the known priorities is ignored rather than failing triage", async () => {
+  const provider = stub({
+    scores: [{ typeId: "a", confidence: 0.92 }],
+    proposal: null,
+    urgency: { level: "P1", reason: "sounds bad" },
+  });
+
+  const { outcome, urgency } = await triageTask(provider, task, [type("a", "Customer email")]);
+
+  expect(outcome).toEqual({ kind: "matched", typeId: "a" });
+  expect(urgency).toBeNull();
 });

@@ -26,6 +26,7 @@ function task(id: string, title: string, body = "…"): Task {
     state: "ingested",
     assignee: null,
     deadline: null,
+    priority: "normal",
     dedupCandidateId: null,
     context: {},
     createdAt: "2026-01-01T00:00:00.000Z",

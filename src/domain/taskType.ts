@@ -1,3 +1,5 @@
+import type { Priority } from "./priority";
+
 export type TaskTypeStatus = "proposed" | "active";
 
 export interface TaskType {
@@ -6,6 +8,8 @@ export interface TaskType {
   description: string;
   examples: string[];
   status: TaskTypeStatus;
+  /** Floor for every task of this type; triage may raise a task above it, never below. */
+  defaultPriority: Priority;
   createdAt: string;
   updatedAt: string;
 }
@@ -21,4 +25,5 @@ export interface TaskTypePatch {
   description?: string;
   examples?: string[];
   status?: TaskTypeStatus;
+  defaultPriority?: Priority;
 }

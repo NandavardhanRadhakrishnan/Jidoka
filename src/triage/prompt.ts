@@ -13,11 +13,18 @@ explicit date, "by Friday", "EOD 9/26", "end of month", etc.). Resolve relative 
 against the task's given "today" date. Leave it null when no deadline is mentioned or
 implied — never invent one.
 
+Finally, check whether the content itself signals elevated urgency beyond what is routine
+for its kind: a legal threat, a safety or harassment concern, an outage or blocked
+operation, a security or fraud concern, an explicit escalation, an imminent hard deadline
+with real consequences. Leave urgency null for ordinary requests — polite urgency words
+("ASAP", "quick question") alone are not a signal. Levels: "high" or "urgent".
+
 Reply with JSON of this shape:
 {
   "scores": [{ "typeId": "<id>", "confidence": <0..1> }],
   "proposal": { "name": "<short name>", "description": "<one sentence>", "rationale": "<why no existing type fits>" } | null,
-  "deadline": "<yyyy-mm-dd>" | null
+  "deadline": "<yyyy-mm-dd>" | null,
+  "urgency": { "level": "high" | "urgent", "reason": "<one short phrase>" } | null
 }`;
 
 export function triageUserMessage(task: Task, types: TaskType[]): string {

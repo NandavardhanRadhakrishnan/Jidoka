@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { Task } from "../domain/task";
 import type { TypeWithRules } from "./api";
-import { LANES, filterByDateRange, groupByLane, STATE_LABEL, taskAge, daysUntil, deadlineUrgency } from "./columns";
+import { LANES, filterByDateRange, groupByLane, STATE_LABEL, taskAge, daysUntil, deadlineUrgency, priorityBadge } from "./columns";
 import { matchesQuery } from "./search";
 import { Icon, sourceIcon } from "./icons";
 
@@ -76,10 +76,17 @@ function TaskCard({
             {task.sourceId}
           </span>
           <span>{typeName}</span>
-          {task.deadline && (
-            <span className={`deadline-badge ${deadlineUrgency(daysUntil(task.deadline)).cls}`} style={{ marginLeft: "auto" }}>
-              <Icon name="calendar" size={10} />
-              {deadlineUrgency(daysUntil(task.deadline)).label}
+          {(priorityBadge(task.priority) || task.deadline) && (
+            <span style={{ marginLeft: "auto", display: "inline-flex", gap: 4 }}>
+              {priorityBadge(task.priority) && (
+                <span className={`priority-badge ${priorityBadge(task.priority)!.cls}`}>{priorityBadge(task.priority)!.label}</span>
+              )}
+              {task.deadline && (
+                <span className={`deadline-badge ${deadlineUrgency(daysUntil(task.deadline)).cls}`}>
+                  <Icon name="calendar" size={10} />
+                  {deadlineUrgency(daysUntil(task.deadline)).label}
+                </span>
+              )}
             </span>
           )}
         </div>

@@ -85,4 +85,6 @@ export const MIGRATIONS: string[] = [
      excerpt TEXT,
      created_at TEXT NOT NULL
    )`,
+  `ALTER TABLE tasks ADD COLUMN priority TEXT NOT NULL DEFAULT 'normal'`,
+  `ALTER TABLE task_types ADD COLUMN default_priority TEXT NOT NULL DEFAULT 'normal'`,
 ];

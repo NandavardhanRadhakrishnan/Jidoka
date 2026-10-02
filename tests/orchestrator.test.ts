@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { openDb, migrate } from "../src/db";
 import { insertTask, getTask, deleteTask, updateTask } from "../src/repo/tasks";
-import { insertTaskType, getTaskType, listTaskTypes } from "../src/repo/taskTypes";
+import { insertTaskType, getTaskType, listTaskTypes, updateTaskType } from "../src/repo/taskTypes";
 import { insertRule, activateRule, getActiveRule } from "../src/repo/rules";
 import { wasMerged } from "../src/repo/mergedSourceItems";
 import {
@@ -19,6 +19,8 @@ import {
   getDependents,
   retriageTask,
   retriageOpenTasksForType,
+  setTaskPriority,
+  refreshPriorityForType,
   type AppDeps,
 } from "../src/orchestrator";
 import { insertHint } from "../src/repo/hints";
@@ -1120,4 +1122,114 @@ test("an ai-assigned task closed by something else while the run is in flight is
   const finished = getTask(db, task.id)!;
   expect(finished.state).toBe("done");
   expect(finished.context.completionNote).toBe("closed by a human mid-run");
+});
+
+test("a matched task with no urgency signal takes its type's default priority", async () => {
+  const db = freshDb();
+  const type = insertTaskType(db, { name: "Legal letter", description: "d" });
+  updateTaskType(db, type.id, { defaultPriority: "high" });
+  const task = insertTask(db, sample);
+  const app = deps(db, [JSON.stringify({ scores: [{ typeId: type.id, confidence: 0.95 }], proposal: null })]);
+
+  const result = await onTaskIngested(app, task);
+
+  expect(result.priority).toBe("high");
+});
+
+test("an urgency signal raises a matched task above its type's default and keeps the reason", async () => {
+  const db = freshDb();
+  const type = insertTaskType(db, { name: "Customer email", description: "d" });
+  const task = insertTask(db, sample);
+  const app = deps(db, [
+    JSON.stringify({
+      scores: [{ typeId: type.id, confidence: 0.95 }],
+      proposal: null,
+      urgency: { level: "urgent", reason: "chargeback threatened" },
+    }),
+  ]);
+
+  const result = await onTaskIngested(app, task);
+
+  expect(result.priority).toBe("urgent");
+  expect(result.context.urgency).toEqual({ level: "urgent", reason: "chargeback threatened" });
+});
+
+test("confirming an ambiguous task's type applies that type's default priority", async () => {
+  const db = freshDb();
+  const a = insertTaskType(db, { name: "Customer email", description: "d" });
+  const b = insertTaskType(db, { name: "Outage report", description: "d" });
+  updateTaskType(db, b.id, { defaultPriority: "urgent" });
+  const task = insertTask(db, sample);
+  const app = deps(db, [
+    JSON.stringify({
+      scores: [
+        { typeId: a.id, confidence: 0.7 },
+        { typeId: b.id, confidence: 0.65 },
+      ],
+      proposal: null,
+    }),
+  ]);
+  const waiting = await onTaskIngested(app, task);
+  expect(waiting.priority).toBe("normal");
+
+  const confirmed = await confirmTaskType(app, waiting.id, b.id);
+
+  expect(confirmed.priority).toBe("urgent");
+});
+
+test("a priority set by hand survives a later re-triage", async () => {
+  const db = freshDb();
+  const type = insertTaskType(db, { name: "Customer email", description: "d" });
+  const other = insertTaskType(db, { name: "Outage report", description: "d" });
+  const task = updateTask(db, insertTask(db, sample).id, { typeId: type.id, state: "assigned_human" });
+  const app = deps(db, [
+    JSON.stringify({
+      scores: [{ typeId: other.id, confidence: 0.95 }],
+      proposal: null,
+      urgency: { level: "urgent", reason: "outage" },
+    }),
+  ]);
+
+  const manual = setTaskPriority(app, task.id, "low");
+  const result = await retriageTask(app, manual);
+
+  expect(manual.priority).toBe("low");
+  expect(result.priority).toBe("low");
+});
+
+test("setting priority back to auto drops the manual override and recomputes it", () => {
+  const db = freshDb();
+  const type = insertTaskType(db, { name: "Legal letter", description: "d" });
+  updateTaskType(db, type.id, { defaultPriority: "high" });
+  const task = updateTask(db, insertTask(db, sample).id, { typeId: type.id, state: "assigned_human" });
+  const app = deps(db, []);
+
+  setTaskPriority(app, task.id, "low");
+  const auto = setTaskPriority(app, task.id, "auto");
+
+  expect(auto.priority).toBe("high");
+  expect(auto.context.priorityOverride).toBeUndefined();
+});
+
+test("changing a type's default re-prioritises its open tasks but not done or hand-set ones", () => {
+  const db = freshDb();
+  const type = insertTaskType(db, { name: "Customer email", description: "d" });
+  const open = updateTask(db, insertTask(db, sample).id, { typeId: type.id, state: "assigned_human" });
+  const done = updateTask(db, insertTask(db, { ...sample, externalId: "m2" }).id, {
+    typeId: type.id,
+    state: "done",
+  });
+  const handSet = updateTask(db, insertTask(db, { ...sample, externalId: "m3" }).id, {
+    typeId: type.id,
+    state: "assigned_human",
+  });
+  const app = deps(db, []);
+  setTaskPriority(app, handSet.id, "low");
+
+  updateTaskType(db, type.id, { defaultPriority: "high" });
+  refreshPriorityForType(app, type.id);
+
+  expect(getTask(db, open.id)?.priority).toBe("high");
+  expect(getTask(db, done.id)?.priority).toBe("normal");
+  expect(getTask(db, handSet.id)?.priority).toBe("low");
 });

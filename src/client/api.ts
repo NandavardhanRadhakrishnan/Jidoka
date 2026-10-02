@@ -1,5 +1,6 @@
 import type { Task } from "../domain/task";
 import type { TaskType } from "../domain/taskType";
+import type { Priority } from "../domain/priority";
 import type { Rule, RuleDefinition } from "../domain/rule";
 import type { Hint } from "../domain/hint";
 import type { ExtensionAuth } from "../domain/extension";
@@ -168,7 +169,15 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ ofTaskId }),
     }),
-  patchType: (typeId: string, patch: { name?: string; description?: string; mergeInto?: string }) =>
+  setPriority: (taskId: string, priority: Priority | "auto") =>
+    json<{ task: Task }>(`/api/tasks/${taskId}/priority`, {
+      method: "POST",
+      body: JSON.stringify({ priority }),
+    }).then((r) => r.task),
+  patchType: (
+    typeId: string,
+    patch: { name?: string; description?: string; mergeInto?: string; defaultPriority?: Priority },
+  ) =>
     json<{ type?: TaskType; merged?: boolean }>(`/api/types/${typeId}`, {
       method: "PATCH",
       body: JSON.stringify(patch),

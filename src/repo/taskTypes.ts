@@ -7,6 +7,7 @@ interface Row {
   description: string;
   examples: string;
   status: string;
+  default_priority: string;
   created_at: string;
   updated_at: string;
 }
@@ -18,6 +19,7 @@ function toType(row: Row): TaskType {
     description: row.description,
     examples: JSON.parse(row.examples) as string[],
     status: row.status as TaskType["status"],
+    defaultPriority: row.default_priority as TaskType["defaultPriority"],
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -54,9 +56,18 @@ export function updateTaskType(
   if (!current) throw new Error(`updateTaskType: unknown type ${id}`);
   const next = { ...current, ...patch, updatedAt: new Date().toISOString() };
   db.query(
-    `UPDATE task_types SET name = ?, description = ?, examples = ?, status = ?, updated_at = ?
+    `UPDATE task_types SET name = ?, description = ?, examples = ?, status = ?, default_priority = ?,
+                           updated_at = ?
      WHERE id = ?`,
-  ).run(next.name, next.description, JSON.stringify(next.examples), next.status, next.updatedAt, id);
+  ).run(
+    next.name,
+    next.description,
+    JSON.stringify(next.examples),
+    next.status,
+    next.defaultPriority,
+    next.updatedAt,
+    id,
+  );
   return next;
 }
 

@@ -18,6 +18,7 @@ const task: Task = {
   state: "processing",
   assignee: null,
   deadline: null,
+  priority: "normal",
   dedupCandidateId: null,
   context: {},
   createdAt: "2026-01-01T00:00:00.000Z",

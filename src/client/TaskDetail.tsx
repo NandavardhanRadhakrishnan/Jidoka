@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { Task } from "../domain/task";
 import type { Hint } from "../domain/hint";
+import { PRIORITIES, type Priority } from "../domain/priority";
 import { api, type HandoffTarget } from "./api";
 import { Handoff, openUrlTargets } from "./Handoff";
-import { daysUntil, deadlineUrgency, taskAge } from "./columns";
+import { daysUntil, deadlineUrgency, priorityBadge, taskAge } from "./columns";
 import { Icon } from "./icons";
 
 interface StepLogEntry {
@@ -44,6 +45,8 @@ const INTERNAL_KEYS = new Set([
   "thread",
   "revision",
   "isFollowUp",
+  "urgency",
+  "priorityOverride",
 ]);
 
 function kindBadgeLabel(type: string): string {
@@ -596,6 +599,48 @@ function StepOutput({
   );
 }
 
+/**
+ * The drawer's priority control: "auto" follows the type default (raised by
+ * triage's urgency signal), any explicit level pins it by hand until set back
+ * to auto. The urgency reason, when triage raised it, rides along as a title.
+ */
+function PriorityControl({ task, onChanged }: { task: Task; onChanged: () => Promise<void> }) {
+  const [busy, setBusy] = useState(false);
+  const pinned = task.context.priorityOverride === true;
+  const urgency = task.context.urgency as { level: Priority; reason: string } | undefined;
+  const badge = priorityBadge(task.priority);
+
+  async function change(value: string) {
+    setBusy(true);
+    try {
+      await api.setPriority(task.id, value as Priority | "auto");
+      await onChanged();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }} title={urgency && !pinned ? `raised by triage: ${urgency.reason}` : undefined}>
+      {badge && <span className={`priority-badge ${badge.cls}`}>{badge.label}</span>}
+      <select
+        className="inline-select"
+        aria-label="Priority"
+        value={pinned ? task.priority : "auto"}
+        disabled={busy}
+        onChange={(e) => void change(e.target.value)}
+      >
+        <option value="auto">priority: auto ({task.priority})</option>
+        {PRIORITIES.map((p) => (
+          <option key={p} value={p}>
+            priority: {p}
+          </option>
+        ))}
+      </select>
+    </span>
+  );
+}
+
 export function TaskDetail({
   task,
   allTasks,
@@ -714,6 +759,8 @@ export function TaskDetail({
             <span className="mono">{task.sourceId}</span>
             <span>·</span>
             <span>{task.assignee ? `assigned to ${task.assignee}` : "unassigned"}</span>
+            <span>·</span>
+            <PriorityControl task={task} onChanged={onChanged} />
             {task.deadline && (
               <>
                 <span>·</span>

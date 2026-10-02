@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { LANES, LANE_OF, filterByDateRange, groupByLane, daysUntil, deadlineUrgency } from "../../src/client/columns";
+import { LANES, LANE_OF, filterByDateRange, groupByLane, daysUntil, deadlineUrgency, priorityBadge } from "../../src/client/columns";
 import type { Task, TaskState } from "../../src/domain/task";
 
 function task(id: string, state: TaskState, createdAt = "2026-01-01T00:00:00.000Z"): Task {
@@ -16,6 +16,7 @@ function task(id: string, state: TaskState, createdAt = "2026-01-01T00:00:00.000
     state,
     assignee: null,
     deadline: null,
+    priority: "normal",
     dedupCandidateId: null,
     context: {},
     createdAt,
@@ -89,4 +90,14 @@ test("deadlineUrgency labels and tones an overdue, due-today, soon, and later de
   expect(deadlineUrgency(0)).toEqual({ label: "due today", cls: "deadline-today" });
   expect(deadlineUrgency(2)).toEqual({ label: "2d left", cls: "deadline-soon" });
   expect(deadlineUrgency(6)).toEqual({ label: "6d left", cls: "deadline-later" });
+});
+
+test("priorityBadge shows nothing for normal, the baseline every task starts at", () => {
+  expect(priorityBadge("normal")).toBeNull();
+});
+
+test("priorityBadge labels and tones the non-baseline priorities", () => {
+  expect(priorityBadge("urgent")).toEqual({ label: "urgent", cls: "priority-urgent" });
+  expect(priorityBadge("high")).toEqual({ label: "high", cls: "priority-high" });
+  expect(priorityBadge("low")).toEqual({ label: "low", cls: "priority-low" });
 });

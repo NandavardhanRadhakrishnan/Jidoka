@@ -324,6 +324,17 @@ textarea.input { min-height: 90px; resize: vertical; }
 .deadline-badge.deadline-soon { background: var(--color-accent-100); color: var(--color-accent-800); }
 .deadline-badge.deadline-later { background: transparent; border: 1px solid var(--color-divider); color: var(--color-neutral-600); }
 
+/* — priority badge (task card meta row + drawer meta); "normal" draws none — */
+.priority-badge { display: inline-flex; align-items: center; font-size: 9.5px; letter-spacing: 0.04em; text-transform: uppercase; padding: 1px 6px; border-radius: var(--radius-sm, 2px); flex-shrink: 0; }
+.priority-badge.priority-urgent { background: var(--color-accent-800); color: var(--color-bg); }
+.priority-badge.priority-high { background: var(--color-accent-100); color: var(--color-accent-800); }
+.priority-badge.priority-low { background: transparent; border: 1px solid var(--color-divider); color: var(--color-neutral-500); }
+
+/* — compact inline select (drawer meta priority, type header default priority) — */
+.inline-select { font: inherit; font-size: 11.5px; padding: 2px 6px; color: var(--color-text); background: var(--color-surface); border: 1px solid var(--color-divider); border-radius: var(--radius-md); cursor: pointer; }
+.inline-select:hover { border-color: color-mix(in srgb, var(--color-text) 45%, transparent); }
+.inline-select:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+
 /* — tool permission badges (agent step tool allowlist) — */
 .perm-badge { font-size: 9.5px; letter-spacing: 0.04em; text-transform: uppercase; padding: 1px 6px; border-radius: var(--radius-sm, 2px); flex-shrink: 0; }
 .perm-badge.perm-read { background: var(--color-neutral-100); color: var(--color-neutral-700); }

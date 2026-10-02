@@ -69,3 +69,19 @@ test("mergeTaskType repoints tasks and deletes the merged type", () => {
   expect(getTask(db, moved.id)?.typeId).toBe(keep.id);
   expect(getTask(db, task.id)?.typeId).toBeNull();
 });
+
+test("a new type defaults to normal priority", () => {
+  const db = freshDb();
+  const type = insertTaskType(db, { name: "Email query", description: "A question arriving by email" });
+
+  expect(type.defaultPriority).toBe("normal");
+});
+
+test("updateTaskType patches a default priority", () => {
+  const db = freshDb();
+  const type = insertTaskType(db, { name: "Legal threat", description: "A letter threatening action" });
+
+  updateTaskType(db, type.id, { defaultPriority: "high" });
+
+  expect(getTaskType(db, type.id)?.defaultPriority).toBe("high");
+});

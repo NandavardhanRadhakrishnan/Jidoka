@@ -1,6 +1,7 @@
 import { Hono, type Context } from "hono";
 import { modelCatalog } from "../ai/models";
 import { RuleDefinitionSchema } from "../domain/rule";
+import { isPriority, type Priority } from "../domain/priority";
 import { validateReferences } from "../rule/builder";
 import { computeWriteTools } from "../rule/writeTools";
 import { findTaskBySource, getTask, insertTask, listTasks } from "../repo/tasks";
@@ -20,6 +21,8 @@ import {
   rerunStep,
   getDependents,
   retriageOpenTasksForType,
+  setTaskPriority,
+  refreshPriorityForType,
   type AppDeps,
 } from "../orchestrator";
 
@@ -128,6 +131,17 @@ export function createServer(deps: AppDeps, extraRoutes?: Hono): Hono {
     return c.json({ task: reopenTask(deps, id) });
   });
 
+  app.post("/api/tasks/:id/priority", async (c) => {
+    const id = c.req.param("id");
+    if (!getTask(deps.db, id)) return c.json({ error: "unknown task" }, 404);
+    const input = await readJson<{ priority?: string }>(c);
+    const priority = input?.priority;
+    if (priority !== "auto" && !isPriority(priority)) {
+      return c.json({ error: "priority must be low, normal, high, urgent or auto" }, 400);
+    }
+    return c.json({ task: setTaskPriority(deps, id, priority) });
+  });
+
   app.post("/api/tasks/:id/skip-onboarding", async (c) => {
     const id = c.req.param("id");
     if (!getTask(deps.db, id)) return c.json({ error: "unknown task" }, 404);
@@ -178,11 +192,17 @@ export function createServer(deps: AppDeps, extraRoutes?: Hono): Hono {
       name?: string;
       description?: string;
       mergeInto?: string;
+      defaultPriority?: string;
     }>(c);
     if (!patch) return c.json({ error: "body must be valid JSON" }, 400);
+    if (patch.defaultPriority !== undefined && !isPriority(patch.defaultPriority)) {
+      return c.json({ error: "defaultPriority must be low, normal, high or urgent" }, 400);
+    }
     if (patch.mergeInto) {
       if (!getTaskType(deps.db, patch.mergeInto)) return c.json({ error: "unknown target" }, 404);
       mergeTaskType(deps.db, id, patch.mergeInto);
+      // Merged-in tasks now sit under the target's default, not their old type's.
+      refreshPriorityForType(deps, patch.mergeInto);
       return c.json({ merged: true });
     }
 
@@ -192,7 +212,12 @@ export function createServer(deps: AppDeps, extraRoutes?: Hono): Hono {
     // 2026-09-27-retriage-on-type-change-design.md.
     const descriptionChanged =
       typeof patch.description === "string" && patch.description !== current.description;
-    const updated = updateTaskType(deps.db, id, patch);
+    const updated = updateTaskType(deps.db, id, {
+      ...(patch.name !== undefined ? { name: patch.name } : {}),
+      ...(patch.description !== undefined ? { description: patch.description } : {}),
+      ...(patch.defaultPriority !== undefined ? { defaultPriority: patch.defaultPriority as Priority } : {}),
+    });
+    if (updated.defaultPriority !== current.defaultPriority) refreshPriorityForType(deps, id);
     if (descriptionChanged) {
       // Can take seconds per open task (a real AI call each) — respond now
       // and let the board poll for tasks moving, same as ingestion.

@@ -1,4 +1,5 @@
 import type { Task, TaskState } from "../domain/task";
+import type { Priority } from "../domain/priority";
 
 export type LaneKey = "needs" | "running" | "settled";
 
@@ -74,4 +75,10 @@ export function taskAge(createdAt: string): string {
   const hours = Math.floor(mins / 60);
   if (hours < 24) return `${hours}h`;
   return `${Math.floor(hours / 24)}d`;
+}
+
+/** Badge for a task's priority; null for "normal", so only the exceptions draw the eye. */
+export function priorityBadge(priority: Priority): { label: string; cls: string } | null {
+  if (priority === "normal") return null;
+  return { label: priority, cls: `priority-${priority}` };
 }

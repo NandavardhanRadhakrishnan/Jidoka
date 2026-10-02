@@ -4,6 +4,7 @@ import type { ModelProviderId } from "./ai/models";
 import { modelCatalog } from "./ai/models";
 import type { Assignee, Task, TaskState } from "./domain/task";
 import type { Rule } from "./domain/rule";
+import { resolvePriority, type Priority } from "./domain/priority";
 import { getTask, listTasks, updateTask, deleteTask } from "./repo/tasks";
 import { recordMergedSourceItem } from "./repo/mergedSourceItems";
 import {
@@ -19,7 +20,7 @@ import {
   insertRule,
   listRules,
 } from "./repo/rules";
-import { triageTask, type TriageResult } from "./triage/triage";
+import { triageTask, type TriageResult, type UrgencySignal } from "./triage/triage";
 import { checkForDuplicate } from "./dedup/dedup";
 import {
   runRule,
@@ -87,12 +88,15 @@ export async function onTaskIngested(deps: AppDeps, task: Task): Promise<Task> {
  *  outcome turned out to differ from what it already had. */
 async function applyTriageOutcome(deps: AppDeps, task: Task, result: TriageResult): Promise<Task> {
   const { outcome, deadline } = result;
+  const context = withUrgency(task.context, result.urgency);
 
   if (outcome.kind === "ambiguous") {
     return updateTask(deps.db, task.id, {
       state: "needs_type_confirmation",
       typeCandidates: outcome.candidateTypeIds,
       deadline,
+      context,
+      priority: autoPriority(deps, { ...task, typeId: null, context }),
     });
   }
 
@@ -106,6 +110,8 @@ async function applyTriageOutcome(deps: AppDeps, task: Task, result: TriageResul
       typeCandidates: null,
       state: "needs_onboarding",
       deadline,
+      context,
+      priority: autoPriority(deps, { ...task, typeId: type.id, context }),
     });
   }
 
@@ -113,8 +119,54 @@ async function applyTriageOutcome(deps: AppDeps, task: Task, result: TriageResul
     typeId: outcome.typeId,
     typeCandidates: null,
     deadline,
+    context,
+    priority: autoPriority(deps, { ...task, typeId: outcome.typeId, context }),
   });
   return processTask(deps, matched);
+}
+
+/** Keeps the latest triage urgency signal on the task, so a later type
+ *  confirmation or type-default change can recompute priority without
+ *  another AI call. A null signal clears any stale one. */
+function withUrgency(context: Record<string, unknown>, urgency: UrgencySignal | null): Record<string, unknown> {
+  const { urgency: _stale, ...rest } = context;
+  return urgency ? { ...rest, urgency } : rest;
+}
+
+/** The priority a task should have right now, unless a human pinned it by
+ *  hand (context.priorityOverride), in which case that pin always wins. */
+function autoPriority(deps: AppDeps, task: Pick<Task, "typeId" | "context" | "priority">): Priority {
+  if (task.context.priorityOverride === true) return task.priority;
+  const type = task.typeId ? getTaskType(deps.db, task.typeId) : null;
+  const signal = (task.context.urgency as UrgencySignal | undefined)?.level ?? null;
+  return resolvePriority(type?.defaultPriority ?? "normal", signal);
+}
+
+/** A human sets a task's priority by hand, pinning it against re-triage and
+ *  type-default changes; "auto" drops the pin and recomputes it. */
+export function setTaskPriority(deps: AppDeps, taskId: string, priority: Priority | "auto"): Task {
+  const task = getTask(deps.db, taskId);
+  if (!task) throw new Error(`setTaskPriority: unknown task ${taskId}`);
+
+  if (priority === "auto") {
+    const { priorityOverride: _pin, ...context } = task.context;
+    return updateTask(deps.db, taskId, { context, priority: autoPriority(deps, { ...task, context }) });
+  }
+  return updateTask(deps.db, taskId, {
+    priority,
+    context: { ...task.context, priorityOverride: true },
+  });
+}
+
+/** Runs when a type's default priority changes (or tasks are merged into
+ *  it): every open, non-pinned task of that type is re-derived. Done tasks
+ *  keep the priority they closed with. */
+export function refreshPriorityForType(deps: AppDeps, typeId: string): void {
+  for (const task of listTasks(deps.db)) {
+    if (task.typeId !== typeId || task.state === "done") continue;
+    const priority = autoPriority(deps, task);
+    if (priority !== task.priority) updateTask(deps.db, task.id, { priority });
+  }
 }
 
 async function triageAndAssign(deps: AppDeps, task: Task): Promise<Task> {
@@ -319,7 +371,11 @@ export async function confirmTaskType(
   if (!type) throw new Error(`confirmTaskType: unknown type ${typeId}`);
 
   updateTaskType(deps.db, typeId, { examples: [...type.examples, task.title] });
-  const updated = updateTask(deps.db, taskId, { typeId, typeCandidates: null });
+  const updated = updateTask(deps.db, taskId, {
+    typeId,
+    typeCandidates: null,
+    priority: autoPriority(deps, { ...task, typeId }),
+  });
   return processTask(deps, updated);
 }
 

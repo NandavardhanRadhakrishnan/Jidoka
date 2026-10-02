@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type Rule, type TypeWithRules } from "./api";
 import { RuleEditor } from "./RuleEditor";
+import { PRIORITIES, type Priority } from "../domain/priority";
 
 function statusOf(type: TypeWithRules): string {
   if (type.activeRuleId) {
@@ -186,7 +187,23 @@ export function Rules() {
           <div className="type-detail-head">
             <h4 style={{ margin: 0 }}>{selected.name}</h4>
             <span className="tag tag-accent">{statusOf(selected)}</span>
-            <span style={{ marginLeft: "auto" }}>
+            <select
+              className="inline-select"
+              aria-label="Default priority"
+              title="Every task of this type starts at this priority; triage can raise a task above it, never below"
+              style={{ marginLeft: "auto" }}
+              value={selected.defaultPriority}
+              onChange={(e) =>
+                void api.patchType(selected.id, { defaultPriority: e.target.value as Priority }).then(refresh)
+              }
+            >
+              {PRIORITIES.map((p) => (
+                <option key={p} value={p}>
+                  default priority: {p}
+                </option>
+              ))}
+            </select>
+            <span>
               <MergeTypeControl
                 key={selected.id}
                 type={selected}

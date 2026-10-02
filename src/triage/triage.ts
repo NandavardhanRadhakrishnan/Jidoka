@@ -2,6 +2,7 @@ import { z } from "zod";
 import { completeJson, type AiProvider } from "../ai/provider";
 import type { Task } from "../domain/task";
 import type { TaskType } from "../domain/taskType";
+import { isPriority, type Priority } from "../domain/priority";
 import { TRIAGE_SYSTEM, triageUserMessage } from "./prompt";
 
 export const MIN_CONFIDENCE = 0.6;
@@ -25,12 +26,22 @@ const responseSchema = z.object({
     .nullable()
     .optional(),
   deadline: z.string().nullable().optional(),
+  // Level is a loose string here so one off-vocabulary answer ("P1") drops
+  // just the signal instead of failing the whole triage call.
+  urgency: z.object({ level: z.string(), reason: z.string() }).nullable().optional(),
 });
+
+export interface UrgencySignal {
+  level: Priority;
+  reason: string;
+}
 
 export interface TriageResult {
   outcome: TriageOutcome;
   /** yyyy-mm-dd if the task text states or clearly implies one, else null. */
   deadline: string | null;
+  /** Set only when the content itself signals elevated urgency; raises, never lowers, the type default. */
+  urgency: UrgencySignal | null;
 }
 
 export async function triageTask(
@@ -49,6 +60,10 @@ export async function triageTask(
   );
 
   const deadline = response.deadline ?? null;
+  const urgency =
+    response.urgency && isPriority(response.urgency.level)
+      ? { level: response.urgency.level, reason: response.urgency.reason }
+      : null;
   const known = new Set(types.map((t) => t.id));
   const scores = response.scores
     .filter((s) => known.has(s.typeId))
@@ -59,20 +74,21 @@ export async function triageTask(
   const runnerUp = scores[1];
 
   if (!top) {
-    if (proposal) return { outcome: { kind: "new_type", proposal }, deadline };
+    if (proposal) return { outcome: { kind: "new_type", proposal }, deadline, urgency };
     throw new Error("triage returned no usable type scores and no proposal");
   }
 
   if (top.confidence >= MIN_CONFIDENCE) {
     if (runnerUp && top.confidence - runnerUp.confidence <= AMBIGUITY_MARGIN) {
-      return { outcome: { kind: "ambiguous", candidateTypeIds: [top.typeId, runnerUp.typeId] }, deadline };
+      return { outcome: { kind: "ambiguous", candidateTypeIds: [top.typeId, runnerUp.typeId] }, deadline, urgency };
     }
-    return { outcome: { kind: "matched", typeId: top.typeId }, deadline };
+    return { outcome: { kind: "matched", typeId: top.typeId }, deadline, urgency };
   }
 
-  if (proposal) return { outcome: { kind: "new_type", proposal }, deadline };
+  if (proposal) return { outcome: { kind: "new_type", proposal }, deadline, urgency };
   return {
     outcome: { kind: "ambiguous", candidateTypeIds: runnerUp ? [top.typeId, runnerUp.typeId] : [top.typeId] },
     deadline,
+    urgency,
   };
 }
