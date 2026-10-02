@@ -738,7 +738,7 @@ export function TaskDetail({
   }
 
   const tone =
-    task.state === "done"
+    task.state === "done" || task.state === "dismissed"
       ? "var(--color-neutral-500)"
       : task.state === "failed"
         ? "var(--color-accent-800)"
@@ -912,6 +912,10 @@ export function TaskDetail({
                 Reopen
               </button>
             </section>
+          ) : task.state === "dismissed" ? (
+            <p className="text-muted">
+              Triage judged this doesn&rsquo;t need your attention. If the source item changes, it is triaged again.
+            </p>
           ) : task.state !== "assigned_human" ? (
             <section className="drawer-section">
               <div className="field">

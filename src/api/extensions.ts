@@ -6,7 +6,7 @@ import { join } from "node:path";
 import * as extensionsRepo from "../repo/extensions";
 import { removeCursor } from "../repo/sourceState";
 import { discoverExtensions } from "../extensions/discovery";
-import { loadOneExtensionSource } from "../extensions/runtime";
+import { loadOneExtensionSource, resolveIdentity } from "../extensions/runtime";
 import { generateExtension, type GeneratedExtension } from "../extensions/generator";
 import { AuthPendingError, type Vault } from "../vault/vault";
 import type { AgentRunner } from "../agent/runner";
@@ -46,6 +46,13 @@ export function createExtensionRoutes(deps: ExtensionRoutesDeps): Hono {
   const app = new Hono();
 
   const pending = new Map<string, PendingGeneration>();
+
+  /** Re-resolved on every successful (re)connect so a changed credential
+   *  always gets a fresh identity; a null result keeps whatever was stored. */
+  async function refreshIdentity(id: string): Promise<void> {
+    const identity = await resolveIdentity(deps.db, deps.extensionsDir, deps.vault, id);
+    if (identity) extensionsRepo.setResolvedIdentity(deps.db, id, identity);
+  }
 
   function uniqueId(baseId: string): string {
     const taken = new Set([
@@ -187,6 +194,7 @@ export function createExtensionRoutes(deps: ExtensionRoutesDeps): Hono {
     if (!body?.apiKey?.trim()) return c.json({ error: "apiKey is required" }, 400);
     try {
       deps.vault.saveApiKey(id, body.apiKey);
+      await refreshIdentity(id);
       return c.json({ connected: true });
     } catch (error) {
       return c.json({ error: errorMessage(error) }, 400);
@@ -215,6 +223,7 @@ export function createExtensionRoutes(deps: ExtensionRoutesDeps): Hono {
     if (!body?.deviceCode) return c.json({ error: "deviceCode is required" }, 400);
     try {
       await deps.vault.completeDeviceConnect(id, body.deviceCode);
+      await refreshIdentity(id);
       return c.json({ connected: true });
     } catch (error) {
       if (error instanceof AuthPendingError) return c.json({ pending: true }, 202);
@@ -252,6 +261,7 @@ export function createExtensionRoutes(deps: ExtensionRoutesDeps): Hono {
 
     try {
       await deps.vault.completeAuthCodeConnect(id, code, state);
+      await refreshIdentity(id);
     } catch (e) {
       return c.html(
         `<h1>Connection failed</h1><p>${escapeHtml(errorMessage(e))}</p><p><a href="/">Back to the board</a></p>`,

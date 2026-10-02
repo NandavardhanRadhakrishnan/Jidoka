@@ -82,3 +82,21 @@ test("get returns null for an unknown id", () => {
   const db = freshDb();
   expect(extensions.get(db, "nope")).toBeNull();
 });
+
+test("a resolved identity is stored per extension and readable by id", () => {
+  const db = openDb(":memory:");
+  migrate(db);
+  extensions.upsertValid(db, {
+    id: "gh",
+    name: "GitHub",
+    version: "1.0.0",
+    summary: "s",
+    readOnly: true,
+    auth: { mode: "api-key", label: "Token" },
+  });
+
+  expect(extensions.getResolvedIdentity(db, "gh")).toBeNull();
+  extensions.setResolvedIdentity(db, "gh", "octocat");
+  expect(extensions.getResolvedIdentity(db, "gh")).toBe("octocat");
+  expect(extensions.getResolvedIdentity(db, "no-such-source")).toBeNull();
+});

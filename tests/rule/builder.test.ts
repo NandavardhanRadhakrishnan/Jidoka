@@ -168,3 +168,12 @@ test("buildRule without previousRule sends the same message as before this featu
 
   expect(second.prompts[0]).toBe(first.prompts[0]);
 });
+
+test("the builder is told to read full conversation history and to resume agent sessions on follow-ups", async () => {
+  const provider = scripted([valid]);
+
+  await buildRule(provider, { type, description: "Acknowledge each bug report", tools: [], models });
+
+  expect(provider.prompts[0]).toContain("full history");
+  expect(provider.prompts[0]).toContain('"resumeSessionFrom"');
+});

@@ -142,3 +142,10 @@ TDD per layer, matching this repo's established convention:
 - `tests/client/columns.test.ts` — `dismissed` buckets into `settled`; `STATE_LABEL` exhaustiveness (TypeScript already enforces this via `Record<TaskState, string>`, so this is really a compile-time check, not a runtime test).
 
 Full `bun run typecheck` + `bun test` clean, per this repo's standing convention, before any part of this is considered done.
+
+## Decisions made during implementation (2026-10-02)
+
+- **Dismissed tasks are re-triaged on a source revision change** (user's call, overriding "dismissed is final"): `dismissed` joined the poller's reopenable states, and `onTaskChanged` sends a dismissed task through full triage with the refreshed content instead of the reopen relevance check. A thread that was side-chatter becomes a live task when someone actually asks the user something; the user's own activity is simply dismissed again. This also partly covers the deferred "wrongly dismissed" recovery.
+- **`resumeSessionFrom` exists only on `agent` steps**, not on an `assign`-to-ai `agentTask`, so the builder instruction targets agent steps. The builder's step-shape docs never mentioned the field before, so they now document it too — without that a generated rule could not use it at all.
+- A skipped reopen is recorded in the audit log as `reopen_skipped` with the model's reason.
+- The builder-prompt change is only unit-tested (prompt content); re-running the original incident's onboarding against a real model and the real GitHub MCP server is still to do.

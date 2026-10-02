@@ -17,6 +17,7 @@ export type AuditKind =
   | "merged"
   | "duplicate_dismissed"
   | "step_rerun"
+  | "reopen_skipped"
   | "type_updated";
 
 /** Who acted: automatic pipeline work, an AI worker finishing a task, or a person. */

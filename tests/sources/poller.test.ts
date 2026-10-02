@@ -418,3 +418,20 @@ test("startPoller ignores a dynamic source whose id collides with a static sourc
   expect(seen.map((t) => t.title)).toEqual(["Static Outlook"]);
   expect(getCursor(db, "outlook")).toBe("static-cursor");
 });
+
+test("pollOnce calls onTaskChanged for a dismissed task whose revision changed, so it can be re-triaged", async () => {
+  const db = freshDb();
+  const source = fakeSource([
+    { items: [{ externalId: "m1", title: "One", body: "side chat", revision: "rev-1" }], cursor: "c1" },
+    { items: [{ externalId: "m1", title: "One", body: "@you can you take this?", revision: "rev-2" }], cursor: "c1" },
+  ]);
+  await pollOnce(db, source, async () => {});
+  updateTask(db, findTaskBySource(db, "fake", "m1")!.id, { state: "dismissed" });
+
+  let called = false;
+  await pollOnce(db, source, async () => {}, async () => {
+    called = true;
+  });
+
+  expect(called).toBe(true);
+});

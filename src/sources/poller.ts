@@ -12,8 +12,9 @@ export type OnTaskChanged = (task: Task, item: RawItem) => Promise<void>;
 
 /** States a revision change is allowed to reopen. Excludes `processing` (a
  *  rule is actively running) and every pre-triage state (no rule has run yet,
- *  so there's nothing to follow up on). */
-const REOPENABLE_STATES = new Set<TaskState>(["done", "assigned_ai", "assigned_human"]);
+ *  so there's nothing to follow up on). `dismissed` is included so a thread
+ *  that was side-chatter can become relevant later (it gets re-triaged). */
+const REOPENABLE_STATES = new Set<TaskState>(["done", "assigned_ai", "assigned_human", "dismissed"]);
 
 export async function pollOnce(
   db: Database,

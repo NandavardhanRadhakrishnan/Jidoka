@@ -54,6 +54,32 @@ export async function loadOneExtensionSource(
   return { id: record.id, poll: source.poll.bind(source) };
 }
 
+/**
+ * Calls the extension's optional `getIdentity(deps)` export. Never throws:
+ * a missing export or a failing call (a network hiccup) is "unknown for now",
+ * and identity is only a hint for relevance, so it must never fail a connect.
+ */
+export async function resolveIdentity(
+  db: Database,
+  extensionsDir: string,
+  vault: Vault,
+  id: string,
+): Promise<string | null> {
+  try {
+    if (!extensionsRepo.get(db, id)) return null;
+    const modulePath = await resolveCacheBustedModulePath(extensionsDir, id);
+    const mod = (await import(modulePath)) as {
+      getIdentity?: (deps: ExtensionSourceDeps) => Promise<string>;
+    };
+    if (typeof mod.getIdentity !== "function") return null;
+    const identity = await mod.getIdentity({ getToken: () => vault.getToken(id) });
+    return typeof identity === "string" && identity.trim() ? identity.trim() : null;
+  } catch (error) {
+    console.warn(`[extensions] identity resolution for ${id} failed:`, error);
+    return null;
+  }
+}
+
 export async function loadEnabledExtensionSources(
   db: Database,
   extensionsDir: string,

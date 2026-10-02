@@ -38,7 +38,7 @@ function TaskCard({
       task.state === "needs_dedup_confirmation" ||
       task.state === "assigned_human"
       ? "needs"
-      : task.state === "done" || task.state === "failed"
+      : task.state === "done" || task.state === "failed" || task.state === "dismissed"
         ? "settled"
         : "running",
     task.state === "failed",

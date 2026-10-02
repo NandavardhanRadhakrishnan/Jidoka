@@ -8,6 +8,7 @@ import { resolvePriority, type Priority } from "./domain/priority";
 import { getTask, listTasks, updateTask, deleteTask } from "./repo/tasks";
 import { recordMergedSourceItem } from "./repo/mergedSourceItems";
 import { recordAudit } from "./repo/audit";
+import { getResolvedIdentity } from "./repo/extensions";
 import {
   getTaskType,
   insertTaskType,
@@ -22,6 +23,7 @@ import {
   listRules,
 } from "./repo/rules";
 import { triageTask, type TriageResult, type UrgencySignal } from "./triage/triage";
+import { assessReopenRelevance } from "./triage/reopenRelevance";
 import { checkForDuplicate } from "./dedup/dedup";
 import {
   runRule,
@@ -68,7 +70,7 @@ function ruleLogFromContext(context: Record<string, unknown>): StepLogEntry[] {
 
 export async function onTaskIngested(deps: AppDeps, task: Task): Promise<Task> {
   const candidates = listTasks(deps.db)
-    .filter((t) => t.id !== task.id && !["done", "failed", "needs_dedup_confirmation"].includes(t.state))
+    .filter((t) => t.id !== task.id && !["done", "failed", "dismissed", "needs_dedup_confirmation"].includes(t.state))
     .slice(0, 30);
 
   const match = await checkForDuplicate(deps.provider, task, candidates);
@@ -106,6 +108,12 @@ function auditTriage(deps: AppDeps, task: Task, result: TriageResult, extra: Rec
 async function applyTriageOutcome(deps: AppDeps, task: Task, result: TriageResult): Promise<Task> {
   const { outcome, deadline } = result;
   const context = withUrgency(task.context, result.urgency);
+
+  if (outcome.kind === "not_relevant") {
+    const dismissed = updateTask(deps.db, task.id, { state: "dismissed", typeCandidates: null, deadline, context });
+    auditTriage(deps, dismissed, result);
+    return dismissed;
+  }
 
   if (outcome.kind === "ambiguous") {
     const waiting = updateTask(deps.db, task.id, {
@@ -195,14 +203,14 @@ export function setTaskPriority(deps: AppDeps, taskId: string, priority: Priorit
  *  keep the priority they closed with. */
 export function refreshPriorityForType(deps: AppDeps, typeId: string): void {
   for (const task of listTasks(deps.db)) {
-    if (task.typeId !== typeId || task.state === "done") continue;
+    if (task.typeId !== typeId || task.state === "done" || task.state === "dismissed") continue;
     const priority = autoPriority(deps, task);
     if (priority !== task.priority) updateTask(deps.db, task.id, { priority });
   }
 }
 
 async function triageAndAssign(deps: AppDeps, task: Task): Promise<Task> {
-  const result = await triageTask(deps.provider, task, listTaskTypes(deps.db));
+  const result = await triageTask(deps.provider, task, listTaskTypes(deps.db), getResolvedIdentity(deps.db, task.sourceId));
   return applyTriageOutcome(deps, task, result);
 }
 
@@ -212,7 +220,7 @@ async function triageAndAssign(deps: AppDeps, task: Task): Promise<Task> {
  *  no-op: re-triage is meant to catch drift, not to force every open task
  *  under a type through a fresh rule run whenever its description is edited. */
 export async function retriageTask(deps: AppDeps, task: Task): Promise<Task> {
-  const result = await triageTask(deps.provider, task, listTaskTypes(deps.db));
+  const result = await triageTask(deps.provider, task, listTaskTypes(deps.db), getResolvedIdentity(deps.db, task.sourceId));
   if (result.outcome.kind === "matched" && result.outcome.typeId === task.typeId) {
     auditTriage(deps, task, result, { retriage: true, unchanged: true });
     return task;
@@ -580,6 +588,38 @@ function asThreadArray(value: unknown): ThreadPass[] {
  *  content, so a rule's `agent` steps can resume their prior session and ask
  *  a follow-up instead of starting cold. */
 export async function onTaskChanged(deps: AppDeps, task: Task, item: RawItem): Promise<Task> {
+  // A dismissed item gets a fresh full triage on the new content — what was
+  // side-chatter may now be addressed to the user. Triage's own relevance
+  // judgment decides; the user's own activity is simply dismissed again.
+  if (task.state === "dismissed") {
+    const refreshed = updateTask(deps.db, task.id, {
+      title: item.title,
+      body: item.body,
+      metadata: item.metadata ?? {},
+      context: { ...task.context, revision: item.revision },
+    });
+    return triageAndAssign(deps, refreshed);
+  }
+
+  const identity = getResolvedIdentity(deps.db, task.sourceId);
+  const type = task.typeId ? getTaskType(deps.db, task.typeId) : null;
+  if (type) {
+    const verdict = await assessReopenRelevance(deps.provider, task, type, item, identity);
+    if (!verdict.relevant) {
+      // Refresh the revision so the next poll doesn't keep flagging the same
+      // change, but leave state and content alone — this is what stops a
+      // rule's own write-back from reopening the task in a loop.
+      recordAudit(deps.db, {
+        kind: "reopen_skipped",
+        actor: "system",
+        taskId: task.id,
+        typeId: task.typeId,
+        data: { revision: item.revision ?? null, reason: verdict.reason ?? null },
+      });
+      return updateTask(deps.db, task.id, { context: { ...task.context, revision: item.revision } });
+    }
+  }
+
   if (!task.typeId) {
     // Every REOPENABLE_STATES entry implies a type was assigned — defensive
     // only, not a real path.

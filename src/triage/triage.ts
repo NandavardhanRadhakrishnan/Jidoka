@@ -17,7 +17,8 @@ export interface TypeProposal {
 export type TriageOutcome =
   | { kind: "matched"; typeId: string }
   | { kind: "ambiguous"; candidateTypeIds: string[] }
-  | { kind: "new_type"; proposal: TypeProposal };
+  | { kind: "new_type"; proposal: TypeProposal }
+  | { kind: "not_relevant" };
 
 const responseSchema = z.object({
   scores: z.array(z.object({ typeId: z.string(), confidence: z.number().min(0).max(1) })),
@@ -29,6 +30,7 @@ const responseSchema = z.object({
   // Level is a loose string here so one off-vocabulary answer ("P1") drops
   // just the signal instead of failing the whole triage call.
   urgency: z.object({ level: z.string(), reason: z.string() }).nullable().optional(),
+  notRelevant: z.boolean().optional(),
 });
 
 export interface UrgencySignal {
@@ -48,12 +50,15 @@ export async function triageTask(
   provider: AiProvider,
   task: Task,
   types: TaskType[],
+  /** The connected user's identity on the task's source (a GitHub login, an
+   *  email address), when that source can resolve one; null otherwise. */
+  identity: string | null = null,
 ): Promise<TriageResult> {
   const response = await completeJson(
     provider,
     {
       system: TRIAGE_SYSTEM,
-      messages: [{ role: "user", content: triageUserMessage(task, types) }],
+      messages: [{ role: "user", content: triageUserMessage(task, types, identity) }],
       maxTokens: 2000,
     },
     responseSchema,
@@ -64,6 +69,10 @@ export async function triageTask(
     response.urgency && isPriority(response.urgency.level)
       ? { level: response.urgency.level, reason: response.urgency.reason }
       : null;
+
+  // Fail open: only an affirmative flag drops a task; silence or uncertainty
+  // falls through to normal classification below, never to a silent dismissal.
+  if (response.notRelevant === true) return { outcome: { kind: "not_relevant" }, deadline, urgency };
   const known = new Set(types.map((t) => t.id));
   const scores = response.scores
     .filter((s) => known.has(s.typeId))

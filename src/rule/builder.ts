@@ -16,8 +16,8 @@ The rule runs automatically for every task of its type. Reply with JSON only:
 
 Step shapes:
 - { "id": "s1", "type": "ai", "prompt": "<prompt, may use {{task.title}}, {{task.body}}, {{task.metadata.<key>}}, {{context.<key>}}>", "model": "<catalog id, or omit>", "output": "<context key>" }
-- { "id": "s1b", "type": "agent", "prompt": "<what to find out and what to produce>", "tools": ["<server>__<tool>", ...], "maxIterations": 6, "model": "<catalog id, or omit>", "output": "<context key>" }
-  "tools" may be an empty list. A toolless agent step still runs a real session and leaves a conversation a human can resume from a handoff, which is what you want when no MCP tools are available.
+- { "id": "s1b", "type": "agent", "prompt": "<what to find out and what to produce>", "tools": ["<server>__<tool>", ...], "maxIterations": 6, "model": "<catalog id, or omit>", "resumeSessionFrom": "<context key, or omit>", "output": "<context key>" }
+  "tools" may be an empty list. "resumeSessionFrom" names the context key holding an earlier run's session id (an agent step's session lands at "<its output>_session"); when that key has a value, the step continues that conversation instead of starting fresh. A toolless agent step still runs a real session and leaves a conversation a human can resume from a handoff, which is what you want when no MCP tools are available.
 - { "id": "s2", "type": "mcp_tool", "server": "<server>", "tool": "<tool>", "input": { ... }, "output": "<context key>" }
 - { "id": "s3", "type": "branch", "on": "<context key>", "cases": { "<value>": [ ...steps ] }, "default": [ ...steps ] }
 - { "id": "s4", "type": "assign", "to": "ai" | "human", "note": "<optional note>", "open": [ ...handoff targets ] }
@@ -37,7 +37,8 @@ Rules:
 - Step ids are unique within the rule.
 - Every rule ends on an assign step in every branch — a task must never finish unassigned.
 - Only use mcp_tool steps for tools listed as available; use the exact server and tool names given.
-- When a step branches on an AI classification, make the ai step's prompt state the exact allowed output values, and use those values as the branch case keys.`;
+- When a step branches on an AI classification, make the ai step's prompt state the exact allowed output values, and use those values as the branch case keys.
+- If this type's tasks are one message in an ongoing conversation (an email thread, an issue with comments, a chat), the task can come back for a follow-up pass when the conversation moves on. Make sure the rule reads the full history before responding — use a read tool that returns the comments or prior messages, not just the single item's own fields — and give an agent step that may run again "resumeSessionFrom": "<that step's output>_session", so a follow-up pass continues the same conversation instead of drafting from scratch. On a follow-up pass "{{context.isFollowUp}}" is "true".`;
 
 export interface BuildInput {
   type: TaskType;

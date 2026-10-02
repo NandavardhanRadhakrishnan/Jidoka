@@ -120,3 +120,11 @@ test("a fix pins manifest.id to targetId even if the model changes it", async ()
   expect(result.manifest.id).toBe("demo");
   expect(runner.calls[0]?.prompt).toContain("401 unauthorized");
 });
+
+test("the generator is told to export getIdentity when the target has a self-identity endpoint", async () => {
+  const runner = scripted([fenced(validManifest, validSource)]);
+
+  await generateExtension(runner, { kind: "create", description: "GitHub issues" }, []);
+
+  expect(runner.calls[0]?.systemPrompt).toContain("getIdentity(deps)");
+});

@@ -1,5 +1,6 @@
 import { test, expect } from "bun:test";
 import { triageTask } from "../../src/triage/triage";
+import { triageUserMessage } from "../../src/triage/prompt";
 import type { AiProvider } from "../../src/ai/provider";
 import type { Task } from "../../src/domain/task";
 import type { TaskType } from "../../src/domain/taskType";
@@ -167,4 +168,44 @@ test("an urgency level outside the known priorities is ignored rather than faili
 
   expect(outcome).toEqual({ kind: "matched", typeId: "a" });
   expect(urgency).toBeNull();
+});
+
+test("notRelevant short-circuits to not_relevant even when a type scores high", async () => {
+  const provider = stub({
+    scores: [{ typeId: "a", confidence: 0.95 }],
+    proposal: null,
+    notRelevant: true,
+  });
+
+  const { outcome } = await triageTask(provider, task, [type("a", "Customer email")]);
+
+  expect(outcome).toEqual({ kind: "not_relevant" });
+});
+
+test("notRelevant false falls through to normal classification", async () => {
+  const provider = stub({ scores: [{ typeId: "a", confidence: 0.95 }], proposal: null, notRelevant: false });
+
+  const { outcome } = await triageTask(provider, task, [type("a", "Customer email")]);
+
+  expect(outcome).toEqual({ kind: "matched", typeId: "a" });
+});
+
+test("the connected user's identity on the source is given to triage when known", () => {
+  expect(triageUserMessage(task, [], "octocat")).toContain("The connected user's identity on this source: octocat");
+  expect(triageUserMessage(task, [], null)).not.toContain("identity on this source");
+});
+
+test("triageTask passes the identity through to the model", async () => {
+  let seen = "";
+  const provider: AiProvider = {
+    id: "stub",
+    async complete(req) {
+      seen = JSON.stringify(req.messages);
+      return { text: JSON.stringify({ scores: [], proposal: { name: "n", description: "d", rationale: "r" } }), toolCalls: [] };
+    },
+  };
+
+  await triageTask(provider, task, [], "octocat");
+
+  expect(seen).toContain("octocat");
 });

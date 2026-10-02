@@ -53,11 +53,12 @@ Manifest rules:
   Pick whichever the target API actually supports, using real values from its real documentation. If the target has no public OAuth client id, prefer "api-key" instead of inventing one.
 
 source.ts rules:
-- Export exactly one function: createSource(deps) -> { poll(cursor) }. Do not add TypeScript type annotations or import anything from Jidoka's own source tree — nothing resolves that path at runtime; write plain, untyped JavaScript-shaped code.
+- Export createSource(deps) -> { poll(cursor) }. Do not add TypeScript type annotations or import anything from Jidoka's own source tree — nothing resolves that path at runtime; write plain, untyped JavaScript-shaped code.
 - "deps.getToken()" returns a Promise<string> — the current valid token or API key. Call it inside poll(), never store it.
 - "poll(cursor)" takes the last cursor (a string, or null on the first call) and must return { items: RawItem[], cursor: string | null }.
 - Each RawItem is { externalId: string, title: string, body: string, url?: string, metadata?: Record<string, unknown> }. "externalId" must be stable and unique per item — it is used to avoid re-ingesting the same item twice.
-- Use "cursor" to avoid re-fetching items already seen; do not keep in-memory state across calls — poll() may run in a fresh process.`;
+- Use "cursor" to avoid re-fetching items already seen; do not keep in-memory state across calls — poll() may run in a fresh process.
+- When the target system has an obvious "who am I" endpoint reachable with the same credential (GitHub's GET /user, Microsoft Graph's GET /me, Slack's auth.test), also export \`async function getIdentity(deps)\` — same deps — returning the connected user's identity on that system as a plain string (a login, an email address, a user id). Jidoka uses it to recognise the user's own activity, so their own comments never come back to them as new work. If there is no such endpoint, omit it. When items carry an author, include it in "metadata".`;
 
 function userMessage(input: GenerateInput | FixInput, feedback?: string): string {
   const base =

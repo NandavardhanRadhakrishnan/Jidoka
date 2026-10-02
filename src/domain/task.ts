@@ -9,7 +9,9 @@ export type TaskState =
   | "assigned_ai"
   | "assigned_human"
   | "done"
-  | "failed";
+  | "failed"
+  /** Triage judged the item doesn't need the connected user at all. */
+  | "dismissed";
 
 export type Assignee = "ai" | "human";
 

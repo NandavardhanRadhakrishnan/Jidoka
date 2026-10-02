@@ -13,6 +13,7 @@ export const LANE_OF: Record<TaskState, LaneKey> = {
   assigned_ai: "running",
   done: "settled",
   failed: "settled",
+  dismissed: "settled",
 };
 
 export const LANES: { key: LaneKey; label: string; sub: string }[] = [
@@ -37,6 +38,7 @@ export const STATE_LABEL: Record<TaskState, string> = {
   assigned_human: "assigned to human",
   done: "done",
   failed: "failed",
+  dismissed: "not relevant",
 };
 
 /** Keeps only tasks created on or after `from` and on or before `to` (both yyyy-mm-dd, either end optional). */

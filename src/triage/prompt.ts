@@ -19,15 +19,23 @@ operation, a security or fraud concern, an explicit escalation, an imminent hard
 with real consequences. Leave urgency null for ordinary requests — polite urgency words
 ("ASAP", "quick question") alone are not a signal. Levels: "high" or "urgent".
 
+Also decide whether this task actually needs the connected user's attention or action at
+all. Set "notRelevant": true only when you are confident it does not — for example side
+conversation between other people that neither involves nor concerns the user, or, when the
+user's identity on this source is given, content authored by that identity itself (the
+user's own message or comment is never something they need to act on). When unsure, leave
+it unset and classify normally; never guess at irrelevance.
+
 Reply with JSON of this shape:
 {
   "scores": [{ "typeId": "<id>", "confidence": <0..1> }],
   "proposal": { "name": "<short name>", "description": "<one sentence>", "rationale": "<why no existing type fits>" } | null,
   "deadline": "<yyyy-mm-dd>" | null,
-  "urgency": { "level": "high" | "urgent", "reason": "<one short phrase>" } | null
+  "urgency": { "level": "high" | "urgent", "reason": "<one short phrase>" } | null,
+  "notRelevant": true | false
 }`;
 
-export function triageUserMessage(task: Task, types: TaskType[]): string {
+export function triageUserMessage(task: Task, types: TaskType[], identity: string | null = null): string {
   const known = types.length
     ? types
         .map(
@@ -39,5 +47,6 @@ export function triageUserMessage(task: Task, types: TaskType[]): string {
     : "(none yet)";
 
   const today = new Date().toISOString().slice(0, 10);
-  return `today: ${today}\n\nKnown task types:\n${known}\n\nTask:\nsource: ${task.sourceId}\ntitle: ${task.title}\nbody:\n${task.body}`;
+  const who = identity ? `\n\nThe connected user's identity on this source: ${identity}` : "";
+  return `today: ${today}\n\nKnown task types:\n${known}${who}\n\nTask:\nsource: ${task.sourceId}\ntitle: ${task.title}\nbody:\n${task.body}`;
 }

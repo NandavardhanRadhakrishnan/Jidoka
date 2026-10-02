@@ -27,6 +27,7 @@ import {
 } from "../src/orchestrator";
 import { insertHint } from "../src/repo/hints";
 import { listAudit } from "../src/repo/audit";
+import { upsertValid, setResolvedIdentity } from "../src/repo/extensions";
 import type { AiProvider } from "../src/ai/provider";
 import type { AgentRunInput, AgentRunner } from "../src/agent/runner";
 
@@ -53,6 +54,9 @@ function deps(db: ReturnType<typeof freshDb>, replies: string[]): AppDeps {
 }
 
 const sample = { sourceId: "outlook", externalId: "m1", title: "Where is my order?", body: "…" };
+
+/** The reopen relevance check's reply that lets a reopen proceed. */
+const RELEVANT = JSON.stringify({ relevant: true });
 
 test("an unmatched task creates a proposed type and waits for onboarding", async () => {
   const db = freshDb();
@@ -713,7 +717,7 @@ test("onTaskChanged archives the current pass, stamps isFollowUp true and the ne
       ],
     },
   });
-  const app = deps(db, ["pass=true"]);
+  const app = deps(db, [RELEVANT, "pass=true"]);
 
   const result = await onTaskChanged(app, initial, {
     externalId: initial.externalId,
@@ -766,7 +770,7 @@ test("onTaskChanged archives passes in order across multiple reopens", async () 
     assignee: "human",
     context: { revision: "rev-1", review: "pass 1", ruleLog: [{ stepId: "s1", type: "ai", output: "review" }] },
   });
-  const app = deps(db, ["pass 2", "pass 3"]);
+  const app = deps(db, [RELEVANT, "pass 2", RELEVANT, "pass 3"]);
 
   const afterFirstReopen = await onTaskChanged(app, initial, {
     externalId: initial.externalId,
@@ -1381,4 +1385,97 @@ test("an AI worker finishing a task is audited with the AI as actor", async () =
   await Bun.sleep(10);
 
   expect(auditKinds(db, task.id, "completed")[0]).toMatchObject({ actor: "ai", data: { note: "Handled." } });
+});
+
+test("a not-relevant ingestion outcome dismisses the task instead of proposing a type", async () => {
+  const db = freshDb();
+  const task = insertTask(db, sample);
+  const app = deps(db, [JSON.stringify({ scores: [], proposal: { name: "x", description: "y", rationale: "z" }, notRelevant: true })]);
+
+  const result = await onTaskIngested(app, task);
+
+  expect(result.state).toBe("dismissed");
+  expect(listTaskTypes(db)).toHaveLength(0);
+  expect(auditKinds(db, task.id, "triaged")[0]?.data.outcome).toEqual({ kind: "not_relevant" });
+});
+
+test("re-triage that finds a task no longer relevant dismisses it", async () => {
+  const db = freshDb();
+  const type = insertTaskType(db, { name: "Customer email", description: "d" });
+  const task = updateTask(db, insertTask(db, sample).id, { typeId: type.id, state: "assigned_human" });
+  const app = deps(db, [JSON.stringify({ scores: [{ typeId: type.id, confidence: 0.9 }], proposal: null, notRelevant: true })]);
+
+  const result = await retriageTask(app, task);
+
+  expect(result.state).toBe("dismissed");
+});
+
+test("triage is told the connected user's identity for a task from an extension source", async () => {
+  const db = freshDb();
+  upsertValid(db, { id: "gh", name: "GitHub", version: "1", summary: "s", readOnly: true, auth: { mode: "api-key", label: "T" } });
+  setResolvedIdentity(db, "gh", "octocat");
+  const task = insertTask(db, { ...sample, sourceId: "gh" });
+  let seen = "";
+  const provider: AiProvider = {
+    id: "stub",
+    async complete(req) {
+      seen = JSON.stringify(req.messages);
+      return { text: JSON.stringify({ scores: [], proposal: null, notRelevant: true }), toolCalls: [] };
+    },
+  };
+
+  await onTaskIngested({ ...deps(db, []), provider }, task);
+
+  expect(seen).toContain("octocat");
+});
+
+test("a reopen judged not relevant only refreshes the revision: no new pass, no rule run, state kept", async () => {
+  const db = freshDb();
+  const type = insertTaskType(db, { name: "Bug report", description: "d" });
+  activateRule(
+    db,
+    insertRule(db, {
+      typeId: type.id,
+      definition: { steps: [{ id: "s1", type: "ai", prompt: "ack", output: "ack" }, { id: "s2", type: "assign", to: "human" }] },
+    }).id,
+  );
+  const initial = updateTask(db, insertTask(db, sample).id, {
+    typeId: type.id,
+    state: "assigned_human",
+    assignee: "human",
+    context: { revision: "rev-1", ack: "first ack" },
+  });
+  const app = deps(db, [JSON.stringify({ relevant: false, reason: "our own comment" }), "SHOULD NOT RUN"]);
+
+  const result = await onTaskChanged(app, initial, {
+    externalId: initial.externalId,
+    title: initial.title,
+    body: "bot: acknowledged",
+    revision: "rev-2",
+  });
+
+  expect(result.state).toBe("assigned_human");
+  expect(result.context.revision).toBe("rev-2");
+  expect(result.context.thread).toBeUndefined();
+  expect(result.context.ack).toBe("first ack");
+  expect(auditKinds(db, initial.id, "reopen_skipped")[0]?.data).toMatchObject({ revision: "rev-2", reason: "our own comment" });
+});
+
+test("a dismissed task whose source item changes is re-triaged with the new content", async () => {
+  const db = freshDb();
+  const type = insertTaskType(db, { name: "Customer email", description: "d" });
+  const dismissed = updateTask(db, insertTask(db, sample).id, { state: "dismissed", context: { revision: "rev-1" } });
+  const app = deps(db, [JSON.stringify({ scores: [{ typeId: type.id, confidence: 0.95 }], proposal: null })]);
+
+  const result = await onTaskChanged(app, dismissed, {
+    externalId: dismissed.externalId,
+    title: "Now addressed to you",
+    body: "@you can you handle this?",
+    revision: "rev-2",
+  });
+
+  expect(result.body).toBe("@you can you handle this?");
+  expect(result.context.revision).toBe("rev-2");
+  expect(result.typeId).toBe(type.id);
+  expect(result.state).toBe("needs_onboarding");
 });

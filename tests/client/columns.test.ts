@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { LANES, LANE_OF, filterByDateRange, groupByLane, daysUntil, deadlineUrgency, priorityBadge } from "../../src/client/columns";
+import { STATE_LABEL, LANES, LANE_OF, filterByDateRange, groupByLane, daysUntil, deadlineUrgency, priorityBadge } from "../../src/client/columns";
 import type { Task, TaskState } from "../../src/domain/task";
 
 function task(id: string, state: TaskState, createdAt = "2026-01-01T00:00:00.000Z"): Task {
@@ -100,4 +100,9 @@ test("priorityBadge labels and tones the non-baseline priorities", () => {
   expect(priorityBadge("urgent")).toEqual({ label: "urgent", cls: "priority-urgent" });
   expect(priorityBadge("high")).toEqual({ label: "high", cls: "priority-high" });
   expect(priorityBadge("low")).toEqual({ label: "low", cls: "priority-low" });
+});
+
+test("a dismissed task settles, labelled as not relevant", () => {
+  expect(LANE_OF.dismissed).toBe("settled");
+  expect(STATE_LABEL.dismissed).toBe("not relevant");
 });

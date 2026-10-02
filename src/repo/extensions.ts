@@ -94,6 +94,21 @@ export function setEnabled(db: Database, id: string, enabled: boolean): void {
   db.query("UPDATE extensions SET enabled = ? WHERE id = ?").run(enabled ? 1 : 0, id);
 }
 
+/** The connected user's identity on this source (a login, an email), as
+ *  returned by the extension's optional getIdentity export at connect time. */
+export function setResolvedIdentity(db: Database, id: string, identity: string): void {
+  db.query("UPDATE extensions SET resolved_identity = ? WHERE id = ?").run(identity, id);
+}
+
+/** Null for sources with no extension record (sample folder, manual tasks) or
+ *  whose extension never resolved one. */
+export function getResolvedIdentity(db: Database, id: string): string | null {
+  const row = db.query("SELECT resolved_identity FROM extensions WHERE id = ?").get(id) as
+    | { resolved_identity: string | null }
+    | null;
+  return row?.resolved_identity ?? null;
+}
+
 export function remove(db: Database, id: string): void {
   db.query("DELETE FROM extensions WHERE id = ?").run(id);
 }

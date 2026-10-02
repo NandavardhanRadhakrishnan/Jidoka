@@ -10,6 +10,7 @@ import type { HttpFetch } from "../../src/vault/deviceCode";
 import type { AgentRunner } from "../../src/agent/runner";
 import { getCursor, setCursor } from "../../src/repo/sourceState";
 import { listTasks } from "../../src/repo/tasks";
+import { getResolvedIdentity, setResolvedIdentity } from "../../src/repo/extensions";
 
 async function freshDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), "jidoka-ext-routes-"));
@@ -891,4 +892,72 @@ test("approving a fix that keeps the same auth.mode leaves an existing connectio
     extensions: { id: string; status: string }[];
   };
   expect(list.extensions.find((e) => e.id === "notion")?.status).toBe("connected");
+});
+
+async function writeIdentitySource(dir: string, id: string, getIdentityBody: string): Promise<void> {
+  await writeFile(
+    join(dir, id, "source.ts"),
+    `export function createSource() { return { id: "${id}", async poll() { return { items: [], cursor: null }; } }; }
+     export async function getIdentity(deps) { ${getIdentityBody} }`,
+  );
+}
+
+test("connecting with an api key resolves and stores the source's identity", async () => {
+  const { dir, db, fetch } = await setup();
+  await writeManifest(dir, "notion", apiKeyManifest);
+  await writeIdentitySource(dir, "notion", `return "me@" + (await deps.getToken());`);
+  await discoverExtensions(db, dir);
+
+  await fetch(
+    new Request("http://localhost/api/extensions/notion/connect/api-key", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ apiKey: "secret-1" }),
+    }),
+  );
+
+  expect(getResolvedIdentity(db, "notion")).toBe("me@secret-1");
+});
+
+test("a failing getIdentity neither fails the connect nor clears a previously stored identity", async () => {
+  const { dir, db, fetch } = await setup();
+  await writeManifest(dir, "notion", apiKeyManifest);
+  await writeIdentitySource(dir, "notion", `throw new Error("network down");`);
+  await discoverExtensions(db, dir);
+  setResolvedIdentity(db, "notion", "earlier-identity");
+
+  const response = await fetch(
+    new Request("http://localhost/api/extensions/notion/connect/api-key", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ apiKey: "secret-1" }),
+    }),
+  );
+
+  expect(response.status).toBe(200);
+  expect(getResolvedIdentity(db, "notion")).toBe("earlier-identity");
+});
+
+test("completing a device-code connect also resolves the identity", async () => {
+  const fakeFetch: HttpFetch = async (input) => {
+    if (String(input).includes("devicecode")) {
+      return jsonResponse({ user_code: "A", device_code: "dc-1", verification_uri: "https://e.com", expires_in: 900, interval: 5 });
+    }
+    return jsonResponse({ access_token: "at-1", refresh_token: "rt-1", expires_in: 3600 });
+  };
+  const { dir, db, fetch } = await setup({ fetch: fakeFetch, now: () => 0 });
+  await writeManifest(dir, "outlook2", deviceCodeManifest);
+  await writeIdentitySource(dir, "outlook2", `return "mailbox-" + (await deps.getToken());`);
+  await discoverExtensions(db, dir);
+
+  await fetch(new Request("http://localhost/api/extensions/outlook2/connect/device/start", { method: "POST" }));
+  await fetch(
+    new Request("http://localhost/api/extensions/outlook2/connect/device/complete", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ deviceCode: "dc-1" }),
+    }),
+  );
+
+  expect(getResolvedIdentity(db, "outlook2")).toBe("mailbox-at-1");
 });

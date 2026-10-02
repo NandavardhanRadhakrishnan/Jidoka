@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { openDb, migrate } from "../../src/db";
 import * as extensions from "../../src/repo/extensions";
 import { createVault } from "../../src/vault/vault";
-import { loadEnabledExtensionSources, loadOneExtensionSource } from "../../src/extensions/runtime";
+import { loadEnabledExtensionSources, loadOneExtensionSource, resolveIdentity } from "../../src/extensions/runtime";
 import type { ExtensionManifest } from "../../src/domain/extension";
 
 async function freshDir(): Promise<string> {
@@ -232,4 +232,43 @@ test("loadOneExtensionSource throws for an unknown id", async () => {
   const vault = createVault({ db });
 
   await expect(loadOneExtensionSource(db, dir, vault, "ghost")).rejects.toThrow(/unknown extension/);
+});
+
+test("resolveIdentity calls an exported getIdentity with the vault's token", async () => {
+  const db = freshDb();
+  const dir = await freshDir();
+  extensions.upsertValid(db, manifest("gh"));
+  await writeSource(
+    dir,
+    "gh",
+    `export function createSource() { return { id: "gh", async poll() { return { items: [], cursor: null }; } }; }
+     export async function getIdentity(deps) { return "user-for-" + (await deps.getToken()); }`,
+  );
+  const vault = createVault({ db });
+  vault.saveApiKey("gh", "tok");
+
+  expect(await resolveIdentity(db, dir, vault, "gh")).toBe("user-for-tok");
+});
+
+test("resolveIdentity returns null when the source has no getIdentity export", async () => {
+  const db = freshDb();
+  const dir = await freshDir();
+  extensions.upsertValid(db, manifest("plain"));
+  await writeSource(dir, "plain", `export function createSource() { return { id: "plain", async poll() { return { items: [], cursor: null }; } }; }`);
+
+  expect(await resolveIdentity(db, dir, createVault({ db }), "plain")).toBeNull();
+});
+
+test("resolveIdentity returns null instead of throwing when getIdentity fails", async () => {
+  const db = freshDb();
+  const dir = await freshDir();
+  extensions.upsertValid(db, manifest("flaky"));
+  await writeSource(
+    dir,
+    "flaky",
+    `export function createSource() { return { id: "flaky", async poll() { return { items: [], cursor: null }; } }; }
+     export async function getIdentity() { throw new Error("network down"); }`,
+  );
+
+  expect(await resolveIdentity(db, dir, createVault({ db }), "flaky")).toBeNull();
 });

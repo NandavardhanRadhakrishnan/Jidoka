@@ -99,4 +99,5 @@ export const MIGRATIONS: string[] = [
    )`,
   `CREATE INDEX IF NOT EXISTS audit_log_task ON audit_log (task_id, at)`,
   `CREATE INDEX IF NOT EXISTS audit_log_at ON audit_log (at)`,
+  `ALTER TABLE extensions ADD COLUMN resolved_identity TEXT`,
 ];
