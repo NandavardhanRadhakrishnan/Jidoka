@@ -77,7 +77,7 @@ function TaskCard({
           </span>
           <span>{typeName}</span>
           {(priorityBadge(task.priority) || task.deadline) && (
-            <span style={{ marginLeft: "auto", display: "inline-flex", gap: 4 }}>
+            <span className="meta-badges">
               {priorityBadge(task.priority) && (
                 <span className={`priority-badge ${priorityBadge(task.priority)!.cls}`}>{priorityBadge(task.priority)!.label}</span>
               )}

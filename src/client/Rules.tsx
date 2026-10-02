@@ -188,7 +188,7 @@ export function Rules() {
           <div className="type-detail-head">
             <h4 style={{ margin: 0 }}>{selected.name}</h4>
             <span className="tag tag-accent">{statusOf(selected)}</span>
-            <span style={{ marginLeft: "auto" }}>
+            <span className="head-actions">
               <SelectTrigger
                 label="default priority"
                 display={<span className="mono">{selected.defaultPriority.toUpperCase()}</span>}
@@ -205,8 +205,6 @@ export function Rules() {
                   </option>
                 ))}
               </SelectTrigger>
-            </span>
-            <span>
               <MergeTypeControl
                 key={selected.id}
                 type={selected}
