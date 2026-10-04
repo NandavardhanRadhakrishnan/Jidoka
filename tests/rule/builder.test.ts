@@ -177,3 +177,18 @@ test("the builder is told to read full conversation history and to resume agent 
   expect(provider.prompts[0]).toContain("full history");
   expect(provider.prompts[0]).toContain('"resumeSessionFrom"');
 });
+
+test("a rebuild may change preserved steps that break the builder's current rules", async () => {
+  const provider = scripted([valid]);
+  const previous = JSON.parse(valid);
+
+  await buildRule(provider, {
+    type,
+    description: "Same as before",
+    tools: [],
+    models,
+    previousRule: { definition: previous, hints: [] },
+  });
+
+  expect(provider.prompts[0]).toContain("unless a preserved step falls short of the Rules");
+});

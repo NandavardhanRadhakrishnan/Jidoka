@@ -22,9 +22,11 @@ with real consequences. Leave urgency null for ordinary requests — polite urge
 Also decide whether this task actually needs the connected user's attention or action at
 all. Set "notRelevant": true only when you are confident it does not — for example side
 conversation between other people that neither involves nor concerns the user, or, when the
-user's identity on this source is given, content authored by that identity itself (the
-user's own message or comment is never something they need to act on). When unsure, leave
-it unset and classify normally; never guess at irrelevance.
+user's identity on this source is given, an item whose only new content is that identity's
+own reply or comment (the user's own reply is never something they need to act on). An item
+the user created themselves — an issue they filed, a note or email to themselves — can still
+be their work: classify it normally. When unsure, leave it unset and classify normally; never
+guess at irrelevance.
 
 Reply with JSON of this shape:
 {

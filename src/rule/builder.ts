@@ -84,7 +84,7 @@ function previousRuleSection(input: BuildInput): string {
 
   return `
 
-Previous active rule (preserve every step except what the description above says needs to change):
+Previous active rule (preserve every step except what the description above says needs to change, unless a preserved step falls short of the Rules in your instructions — the rule may predate them, so bring such steps up to date):
 ${JSON.stringify(definition, null, 2)}
 
 Corrections learned from reviewing past outputs of specific steps (fold whichever are still relevant into the new prompts you write for the corresponding steps):
