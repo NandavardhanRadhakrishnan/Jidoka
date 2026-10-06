@@ -53,6 +53,16 @@ Break one big task into several smaller ones. Three entry points, undecided:
 - (b) a standalone chat box where you describe how to split;
 - (c) a rule step that creates child tasks with their own assignees and states — the shape real playbooks use (employee onboarding spawns IT, facilities and payroll tasks; procurement runs legal, finance and security approvals in parallel). `call_rule` is synchronous and creates no tasks today.
 
+### 9. First-run setup — M
+
+Jidoka has no first-run flow. "Onboarding" in the code means *type* onboarding; this item is the app's own setup on first launch. Requirements collected so far:
+
+- **Your org.** The user names their org and adds its email domains. The roster creates a home org ("My org") at startup as a fallback, and setup should fill it in rather than create a second org. The home-org flag never moves: it is the future multiplayer workspace.
+- **Who you are.** The user sets their display name on the "Me" person and confirms its identities (`email:…`, `github:…`). Identities resolved from connected extensions (`getIdentity`) are added to "Me" automatically; setup shows them and lets the user add any that no extension reports.
+- **Domain suggestion.** When "Me" has an email identity on a non-public domain, offer to add that domain to the home org, one click and never automatic.
+
+Source: the roster brainstorm (spec to follow under `docs/superpowers/specs/`).
+
 ## Small follow-ups — S
 
 - **Sort lanes by priority.** Lanes are ordered newest first; priority doesn't affect order.
