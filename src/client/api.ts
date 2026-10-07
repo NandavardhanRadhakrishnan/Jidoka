@@ -5,6 +5,7 @@ import type { Rule, RuleDefinition } from "../domain/rule";
 import type { Hint } from "../domain/hint";
 import type { ExtensionAuth } from "../domain/extension";
 import type { ToolSpec } from "../ai/provider";
+import type { Org, Person, ResolvedParticipant, Roster } from "../domain/roster";
 
 export type { Rule };
 export type { Hint };
@@ -260,4 +261,54 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(patch),
     }).then((r) => r.effective),
+  roster: () => json<Roster>("/api/roster"),
+  createOrg: (name: string) =>
+    json<{ org: Org }>("/api/orgs", { method: "POST", body: JSON.stringify({ name }) }).then((r) => r.org),
+  patchOrg: (id: string, name: string) =>
+    json<{ org: Org }>(`/api/orgs/${id}`, { method: "PATCH", body: JSON.stringify({ name }) }).then((r) => r.org),
+  deleteOrg: (id: string) => json<{ deleted: true }>(`/api/orgs/${id}`, { method: "DELETE" }),
+  addDomain: (orgId: string, domain: string) =>
+    json<{ org: Org; suggestedMoves: Person[] }>(`/api/orgs/${orgId}/domains`, {
+      method: "POST",
+      body: JSON.stringify({ domain }),
+    }),
+  removeDomain: (orgId: string, domain: string) =>
+    json<{ org: Org }>(`/api/orgs/${orgId}/domains/${encodeURIComponent(domain)}`, { method: "DELETE" }),
+  movePeopleToOrg: (orgId: string, personIds: string[]) =>
+    json<{ moved: Person[] }>(`/api/orgs/${orgId}/people`, {
+      method: "POST",
+      body: JSON.stringify({ personIds }),
+    }).then((r) => r.moved),
+  createPerson: (name: string, orgId: string | null) =>
+    json<{ person: Person }>("/api/people", { method: "POST", body: JSON.stringify({ name, orgId }) }).then(
+      (r) => r.person,
+    ),
+  patchPerson: (id: string, patch: { name?: string; orgId?: string | null }) =>
+    json<{ person: Person }>(`/api/people/${id}`, { method: "PATCH", body: JSON.stringify(patch) }).then(
+      (r) => r.person,
+    ),
+  deletePerson: (id: string) => json<{ deleted: true }>(`/api/people/${id}`, { method: "DELETE" }),
+  addIdentity: (personId: string, identity: string) =>
+    json<{ person: Person }>(`/api/people/${personId}/identities`, {
+      method: "POST",
+      body: JSON.stringify({ identity }),
+    }).then((r) => r.person),
+  removeIdentity: (personId: string, identity: string) =>
+    json<{ person: Person }>(`/api/people/${personId}/identities/${encodeURIComponent(identity)}`, {
+      method: "DELETE",
+    }).then((r) => r.person),
+  participants: (taskId: string) =>
+    json<{ participants: ResolvedParticipant[] }>(`/api/tasks/${taskId}/participants`).then((r) => r.participants),
+  addParticipant: (
+    taskId: string,
+    input: { personId: string } | { name: string; identity?: string; orgId?: string | null },
+  ) =>
+    json<{ participants: ResolvedParticipant[] }>(`/api/tasks/${taskId}/participants`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }).then((r) => r.participants),
+  removeParticipant: (taskId: string, participantId: string) =>
+    json<{ participants: ResolvedParticipant[] }>(`/api/tasks/${taskId}/participants/${participantId}`, {
+      method: "DELETE",
+    }).then((r) => r.participants),
 };
