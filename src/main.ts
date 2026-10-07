@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import index from "./client/index.html";
 import { loadConfig, applySettings, type Config } from "./config";
 import { openDb, migrate } from "./db";
+import { ensureRosterDefaults } from "./repo/roster";
 import { createProvider, describeCredentials } from "./ai";
 import { McpManager } from "./mcp/manager";
 import { createServer } from "./api/server";
@@ -34,6 +35,7 @@ export interface App {
 export function createApp(baseConfig: Config): App {
   const db = openDb(baseConfig.dbPath);
   migrate(db);
+  ensureRosterDefaults(db);
   const config = applySettings(baseConfig, getSettings(db));
 
   const authDeps = { db, providers: config.oauth };

@@ -21,3 +21,26 @@ test("migrate can run twice against the same database without erroring", () => {
 
   expect(() => migrate(db)).not.toThrow();
 });
+
+test("roster tables and indexes exist and migrate() re-runs cleanly", () => {
+  const db = openDb(":memory:");
+  migrate(db);
+  migrate(db);
+  const names = (
+    db.query("SELECT name FROM sqlite_master WHERE type IN ('table', 'index')").all() as { name: string }[]
+  ).map((r) => r.name);
+  for (const name of [
+    "orgs",
+    "orgs_one_home",
+    "org_domains",
+    "people",
+    "people_one_self",
+    "person_identities",
+    "task_participants",
+    "task_participants_source",
+    "task_participants_human",
+    "task_participants_identity",
+  ]) {
+    expect(names).toContain(name);
+  }
+});

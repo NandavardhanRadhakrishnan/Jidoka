@@ -100,4 +100,45 @@ export const MIGRATIONS: string[] = [
   `CREATE INDEX IF NOT EXISTS audit_log_task ON audit_log (task_id, at)`,
   `CREATE INDEX IF NOT EXISTS audit_log_at ON audit_log (at)`,
   `ALTER TABLE extensions ADD COLUMN resolved_identity TEXT`,
+  `CREATE TABLE IF NOT EXISTS orgs (
+     id TEXT PRIMARY KEY,
+     name TEXT NOT NULL,
+     is_home INTEGER NOT NULL DEFAULT 0,
+     created_at TEXT NOT NULL,
+     updated_at TEXT NOT NULL
+   )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS orgs_one_home ON orgs (is_home) WHERE is_home = 1`,
+  `CREATE TABLE IF NOT EXISTS org_domains (
+     domain TEXT PRIMARY KEY,
+     org_id TEXT NOT NULL REFERENCES orgs(id) ON DELETE CASCADE
+   )`,
+  `CREATE TABLE IF NOT EXISTS people (
+     id TEXT PRIMARY KEY,
+     display_name TEXT NOT NULL,
+     org_id TEXT REFERENCES orgs(id) ON DELETE SET NULL,
+     is_self INTEGER NOT NULL DEFAULT 0,
+     created_at TEXT NOT NULL,
+     updated_at TEXT NOT NULL
+   )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS people_one_self ON people (is_self) WHERE is_self = 1`,
+  `CREATE TABLE IF NOT EXISTS person_identities (
+     identity TEXT PRIMARY KEY,
+     person_id TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE
+   )`,
+  `CREATE TABLE IF NOT EXISTS task_participants (
+     id TEXT PRIMARY KEY,
+     task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+     identity TEXT,
+     person_id TEXT REFERENCES people(id) ON DELETE CASCADE,
+     name TEXT,
+     role TEXT NOT NULL,
+     added_by TEXT NOT NULL,
+     created_at TEXT NOT NULL,
+     CHECK (identity IS NOT NULL OR person_id IS NOT NULL)
+   )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS task_participants_source
+     ON task_participants (task_id, identity, role) WHERE added_by = 'source'`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS task_participants_human
+     ON task_participants (task_id, person_id) WHERE added_by = 'human'`,
+  `CREATE INDEX IF NOT EXISTS task_participants_identity ON task_participants (identity)`,
 ];
