@@ -22,6 +22,10 @@ test("createApp wires the API and serves an empty board", async () => {
   expect(types.status).toBe(200);
   expect(await types.json()).toEqual({ types: [] });
 
+  const rosterResponse = await app.fetch(new Request("http://localhost/api/roster"));
+  expect(rosterResponse.status).toBe(200);
+  expect(((await rosterResponse.json()) as { orgs: unknown[] }).orgs).toHaveLength(1);
+
   await app.close();
 });
 

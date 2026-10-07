@@ -11,6 +11,7 @@ import { createHandoffRoutes } from "./api/handoff";
 import { createSettingsRoutes } from "./api/settings";
 import { createVault, type Vault } from "./vault/vault";
 import { createExtensionRoutes } from "./api/extensions";
+import { createRosterRoutes } from "./api/roster";
 import { discoverExtensions } from "./extensions/discovery";
 import { createInProcessRunner, type AgentRunner } from "./agent/runner";
 import { createAgentSdkRunner } from "./agent/claudeAgentSdk";
@@ -98,6 +99,7 @@ export function createApp(baseConfig: Config): App {
     }),
   );
   extraRoutes.route("/", createSettingsRoutes({ db, baseConfig }));
+  extraRoutes.route("/", createRosterRoutes({ db }));
 
   const api = createServer(deps, extraRoutes);
 
