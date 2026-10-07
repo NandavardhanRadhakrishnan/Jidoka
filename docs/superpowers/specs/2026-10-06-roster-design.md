@@ -146,7 +146,7 @@ export class RosterConflictError extends Error {}
 
 ## Repo
 
-**`src/repo/roster.ts`** (new) holds all roster SQL:
+**`src/repo/roster.ts`** (new) holds the org, domain, person and identity SQL:
 
 - Orgs: `listOrgs`, `createOrg`, `renameOrg`, `deleteOrg` (refuses the home org), `addDomain`, `removeDomain`.
 - `unaffiliatedPeopleOnDomain(db, domain): Person[]`: people with `org_id IS NULL` who own an `email:` identity on exactly that domain.
@@ -155,12 +155,13 @@ export class RosterConflictError extends Error {}
 - `getRoster(db): Roster`, one payload for the People screen.
 - `getSelf(db): Person`.
 - `ensureRosterDefaults(db)`: called from `src/main.ts` right after `migrate()`. Creates the home org ("My org") and Me ("Me", in that org) when either is missing. Idempotent.
-- Participants:
+- Participants live in **`src/repo/participants.ts`** (their own table, their own module):
   - `upsertSourceParticipants(db, taskId, participants)`: `INSERT OR IGNORE` against the source unique index.
-  - `addHumanParticipant(db, taskId, personId)`.
+  - `tagPerson(db, taskId, personId)`: adds a hand-added row unless a participant on this task already resolves to that person.
+  - `createAndTagPerson(db, taskId, { name, identity?, orgId? })`: one transaction; creates the person, adds the identity, then `tagPerson`.
   - `removeHumanParticipant(db, taskId, participantId)`: refuses source rows.
   - `listParticipants(db, taskId): ResolvedParticipant[]`: source rows `LEFT JOIN person_identities` on `identity`, then `people` and `orgs`; hand-added rows join on `person_id`.
-  - `moveParticipants(db, fromTaskId, toTaskId)`: `INSERT OR IGNORE` copies.
+  - `moveParticipants(db, fromTaskId, toTaskId)`: copies source rows with `INSERT OR IGNORE` and hand-added rows through `tagPerson`.
 
 Every conflict throws `RosterConflictError` with the exact user-facing message:
 
@@ -174,6 +175,8 @@ Every conflict throws `RosterConflictError` with the exact user-facing message:
 | Malformed domain | `Enter a domain like acme.test` |
 | Deleting the home org | `Your org can't be deleted` |
 | Deleting Me | `You can't delete yourself from the roster` |
+| Moving Me out of Your org | `You always belong to your org` |
+| Removing a source-reported participant | `People reported by the source can't be removed` |
 
 Deleting an org cascades its domains and moves its people to No org (`ON DELETE SET NULL`).
 
@@ -192,7 +195,7 @@ participants?: { identity: string; name?: string; role: ParticipantRole }[];
 **`src/sources/poller.ts`**:
 - New items: the task and its participants are inserted in one transaction. Each participant goes through `normalizeIdentity`; a malformed one, or one with an unknown role, is dropped with a single `console.warn` naming the source. It never fails the poll.
 - Already-known items: their participants are upserted on every poll that reports them, regardless of state or revision. The upsert is idempotent, so a naive source that returns the same items every tick writes nothing new, and a new commenter on a reopened item is recorded even when the relevance check declines the reopen. Nothing is ever removed by a poll, and hand-added rows are never touched.
-- `NewTask` gains `participants?` so `insertTask` can write them in its transaction.
+- `insertTask` itself is unchanged: the poller wraps `insertTask` and `upsertSourceParticipants` in one `db.transaction`, so `src/repo/tasks.ts` doesn't depend on the roster repo.
 
 **Task merge** (`mergeTasks` in `src/orchestrator.ts`): the duplicate is deleted, which would cascade its participants away, so `moveParticipants(duplicate → target)` runs first.
 
@@ -237,7 +240,7 @@ DELETE /api/tasks/:id/participants/:pid     hand-added rows only
 
 ## UI
 
-Designed in Claude Design, project `Jidoka` (`f9eff891-e467-4c9a-be09-0e44d889c08d`). The handoff is `design_handoff_roster/README.md` in that project, synced against main on 2026-10-06. It is the UI spec: a People screen between "Types & rules" and "Extensions", a People section in the task drawer between "Merged from" and "Task content", the exact copy and empty states, the class list for `modernist.css`, five new Lucide icons, and 13 acceptance checks.
+Designed in Claude Design, project `Jidoka` (`f9eff891-e467-4c9a-be09-0e44d889c08d`), handoff `design_handoff_roster/README.md`, synced against main on 2026-10-06. A copy lives in the repo as `docs/superpowers/specs/2026-10-06-roster-ui-handoff.md`. It is the UI spec: a People screen between "Types & rules" and "Extensions", a People section in the task drawer between "Merged from" and "Task content", the exact copy and empty states, the class list for `modernist.css`, five new Lucide icons, and 13 acceptance checks.
 
 **Addition not in the handoff: the domain suggestion.** When `POST /api/orgs/:id/domains` returns a non-empty `suggestedMoves`, the org detail shows a notice under the domains add row, styled like `.roster-intro`: *"2 people in No org have @supplier.test addresses. Move them to Supplier Ltd?"* (singular for one), listing their names, with `[Move them]` (`.btn-secondary`, small) and `[Not now]` (ghost). Move calls `POST /api/orgs/:id/people` and reloads the roster; Not now dismisses it. The notice isn't persisted: it appears only right after the domain is added.
 
