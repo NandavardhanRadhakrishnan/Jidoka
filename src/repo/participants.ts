@@ -52,7 +52,14 @@ export function listParticipants(db: Database, taskId: string): ResolvedParticip
 
   const people = new Map(listPeople(db).map((p) => [p.id, p]));
   const orgs = new Map(listOrgs(db).map((o) => [o.id, o]));
-  return rows.map((row) => {
+  // A person tagged by hand and later reported by the source (they commented)
+  // is shown once, by the source row; the hand-added row stays stored, so it
+  // reappears if that identity is ever taken off them.
+  const reportedBySource = new Set(
+    rows.filter((r) => r.added_by === "source" && r.resolved_person_id).map((r) => r.resolved_person_id),
+  );
+  const visible = rows.filter((r) => r.added_by === "source" || !reportedBySource.has(r.resolved_person_id));
+  return visible.map((row) => {
     const person = row.resolved_person_id ? (people.get(row.resolved_person_id) ?? null) : null;
     const org = person?.orgId ? (orgs.get(person.orgId) ?? null) : null;
     return {

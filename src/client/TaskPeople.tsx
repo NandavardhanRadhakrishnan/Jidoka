@@ -27,11 +27,14 @@ export function TaskPeople({ taskId }: { taskId: string }) {
     setRoster(nextRoster);
   }
 
+  // Re-resolved on the board's 5-second cadence, so roster edits made on the
+  // People screen and people a poll adds show up while the drawer stays open.
+  // The drawer mounts this keyed by task id, so a late response for a task
+  // the user has since left lands on an unmounted component, never this one.
   useEffect(() => {
-    setPicking(false);
-    setAddingFor(null);
-    setError(null);
     reload().catch((e) => setError(message(e)));
+    const timer = setInterval(() => void reload().catch(() => {}), 5000);
+    return () => clearInterval(timer);
   }, [taskId]);
 
   async function remove(participantId: string) {

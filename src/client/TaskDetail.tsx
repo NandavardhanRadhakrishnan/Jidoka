@@ -817,7 +817,7 @@ export function TaskDetail({
             </section>
           )}
 
-          <TaskPeople taskId={task.id} />
+          <TaskPeople key={task.id} taskId={task.id} />
 
           {task.body && (
             <section className="drawer-section">

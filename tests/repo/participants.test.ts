@@ -178,3 +178,17 @@ test("deleting a task deletes its participants", () => {
   deleteTask(db, task.id);
   expect(db.query("SELECT COUNT(*) AS n FROM task_participants").get()).toEqual({ n: 0 });
 });
+
+test("a hand-added person later reported by the source is listed once, by the source row", () => {
+  const db = freshDb();
+  const task = newTask(db);
+  const bob = roster.createPerson(db, { name: "Bob", orgId: null });
+  roster.addIdentity(db, bob.id, "github:bob");
+  tagPerson(db, task.id, bob.id);
+
+  upsertSourceParticipants(db, task.id, [{ identity: "github:bob", role: "commenter" }]);
+
+  expect(listParticipants(db, task.id).map((p) => [p.role, p.addedBy, p.person?.displayName])).toEqual([
+    ["commenter", "source", "Bob"],
+  ]);
+});
