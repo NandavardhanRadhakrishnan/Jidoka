@@ -32,12 +32,24 @@ Jidoka is single-user today and will become multiplayer. The roster is shaped so
 
 - **Org**: a relationship group seen from the user's org, not a legal company. A vendor's broker or tech partner at a different domain still belongs in the vendor's org. Exactly one org is the user's own (**Your org**); it always exists, can be renamed, and can't be deleted.
 - **Org domain**: an email domain attached to an org (`supplier.test`). Domains are only a hint for attributing senders who aren't in the roster. A domain belongs to at most one org (an ambiguous domain would attribute replies to the wrong party, so it's left off every org). Public webmail domains can't be added.
-- **Person**: a display name and an optional org. The org is always set by hand, never derived from a domain. Display names are not unique.
+- **Person**: a display name and an optional org. Display names are not unique. The stored org is always confirmed by the user; a domain can *suggest* it but never changes it on its own (see "Domains suggest, never move").
 - **Identity**: `namespace:value`, owned by exactly one person: `email:bob@acme.test`, `github:bobsmith`. Namespaces name a *system*, not an extension instance, so the same Bob is matched whether he arrives through an Outlook source, a Gmail source or an MCP server. A person may have no identities (someone dealt with by phone).
 - **Me**: the person who is the user. Lives in Your org, always exists, can be renamed, can't be deleted, and gains identities automatically when extensions connect.
 - **Participant**: a row tying a person to a task. Source rows carry a raw identity and a role; the person is resolved by joining on the identity when the task is read. Hand-added rows point straight at a person.
 
 Matching happens at read time, not at write time: adding Bob to the roster next week makes every earlier task he was on show him, with no backfill.
+
+### Domains suggest, never move
+
+A person's org is not derived live from their email domain, for four reasons:
+1. A person can have addresses on several domains that sit on different orgs, so a derived org has no single answer.
+2. Adding a domain to an org would silently reclassify people already filed elsewhere, and once waiting and escalation exist, a person's org (yours or external) changes how their tasks behave.
+3. People with no email identity (GitHub-only, phone-only) would have no org.
+4. In multiplayer, Your org is the workspace, and "anyone with an @acme.test address is one of us" is a domain auto-join that must be an explicit opt-in, not a side effect of the data model.
+
+Domains are used as suggestions at the two moments they help:
+- **On creation:** "Add to roster" prefills the org whose domains contain the identity's email domain (the handoff's "Guessed from …").
+- **On adding a domain:** if people in No org have an email identity on that domain, Jidoka offers to move them: *"2 people in No org have @supplier.test addresses. Move them to Supplier Ltd?"* It only offers people in No org, never anyone already in an org, and nothing moves until the user clicks.
 
 ## Data model
 
@@ -137,6 +149,8 @@ export class RosterConflictError extends Error {}
 **`src/repo/roster.ts`** (new) holds all roster SQL:
 
 - Orgs: `listOrgs`, `createOrg`, `renameOrg`, `deleteOrg` (refuses the home org), `addDomain`, `removeDomain`.
+- `unaffiliatedPeopleOnDomain(db, domain): Person[]`: people with `org_id IS NULL` who own an `email:` identity on exactly that domain.
+- `movePeopleToOrg(db, orgId, personIds)`: one transaction; moves only people who are still in No org, and returns those it moved.
 - People: `createPerson`, `updatePerson` (name, org), `deletePerson` (refuses Me), `addIdentity`, `removeIdentity`.
 - `getRoster(db): Roster`, one payload for the People screen.
 - `getSelf(db): Person`.
@@ -205,8 +219,9 @@ GET    /api/roster                          Roster
 POST   /api/orgs                            { name } → Org
 PATCH  /api/orgs/:id                        { name }
 DELETE /api/orgs/:id
-POST   /api/orgs/:id/domains                { domain }
+POST   /api/orgs/:id/domains                { domain } → { org, suggestedMoves: Person[] }
 DELETE /api/orgs/:id/domains/:domain
+POST   /api/orgs/:id/people                 { personIds } → { moved: Person[] }   accepts a domain suggestion
 POST   /api/people                          { name, orgId: string | null } → Person
 PATCH  /api/people/:id                      { name?, orgId? }
 DELETE /api/people/:id
@@ -223,6 +238,8 @@ DELETE /api/tasks/:id/participants/:pid     hand-added rows only
 ## UI
 
 Designed in Claude Design, project `Jidoka` (`f9eff891-e467-4c9a-be09-0e44d889c08d`). The handoff is `design_handoff_roster/README.md` in that project, synced against main on 2026-10-06. It is the UI spec: a People screen between "Types & rules" and "Extensions", a People section in the task drawer between "Merged from" and "Task content", the exact copy and empty states, the class list for `modernist.css`, five new Lucide icons, and 13 acceptance checks.
+
+**Addition not in the handoff: the domain suggestion.** When `POST /api/orgs/:id/domains` returns a non-empty `suggestedMoves`, the org detail shows a notice under the domains add row, styled like `.roster-intro`: *"2 people in No org have @supplier.test addresses. Move them to Supplier Ltd?"* (singular for one), listing their names, with `[Move them]` (`.btn-secondary`, small) and `[Not now]` (ghost). Move calls `POST /api/orgs/:id/people` and reloads the roster; Not now dismisses it. The notice isn't persisted: it appears only right after the domain is added.
 
 Two deliberate deviations from the handoff:
 - **Hover styles follow the repo.** The handoff asks for ramp-token hovers (`--color-neutral-200`, `--color-accent-100`). `modernist.css` uses `color-mix()` tints for row and ghost hovers almost everywhere (`.type-row`, `.pane-row`, `.btn-ghost`), so the new classes do too. `.participant-pick` copies `.candidate-btn`, which already uses `accent-100`, so it keeps that.
@@ -245,10 +262,11 @@ All in-memory database, no network, following the existing layout:
   - `ensureRosterDefaults` run twice leaves one home org and one Me
   - read-time resolution: an identity added after ingestion resolves an earlier task's participant
   - `moveParticipants`
+  - `unaffiliatedPeopleOnDomain` finds only No-org people on that exact domain (not a subdomain, not people already in an org); `movePeopleToOrg` skips anyone who joined an org in the meantime
 - `tests/sources/poller.test.ts`: participants written with a new task, upserted for a known item without duplicates, malformed ones dropped.
 - `tests/orchestrator.test.ts`: merging tasks keeps the duplicate's participants.
 - `tests/api/extensions.test.ts`: a namespaced `getIdentity` lands on Me, a bare one doesn't, and an identity owned by someone else doesn't fail the connect.
-- `tests/api/roster.test.ts`: every route, each 409 string, and the add-to-roster no-duplicate rule (with the prefilled identity and with an edited one).
+- `tests/api/roster.test.ts`: every route, each 409 string, the add-to-roster no-duplicate rule (with the prefilled identity and with an edited one), and adding a domain returns `suggestedMoves` without moving anyone.
 - `tests/client/roster.test.ts`: the pure helpers.
 - `tests/db/migrations.test.ts`: the new tables and partial indexes exist, and `migrate()` stays re-runnable.
 
