@@ -307,3 +307,27 @@ export function movePeopleToOrg(db: Database, orgId: string, personIds: string[]
     return moved;
   })();
 }
+
+/** Files an identity an extension resolved for the user onto Me. Never throws:
+ *  identity resolution must never fail a connect, so a bare (un-namespaced)
+ *  value, an identity someone else owns, or a roster without defaults is
+ *  logged where useful and skipped. */
+export function addSelfIdentity(db: Database, raw: string): "added" | "already" | "skipped" {
+  try {
+    const identity = normalizeIdentity(raw);
+    if (!identity) return "skipped";
+    const self = getSelf(db);
+    const owner = identityOwner(db, identity);
+    if (owner?.id === self.id) return "already";
+    if (owner) {
+      console.warn(`[roster] ${identity} belongs to ${owner.displayName}; not adding it to you`);
+      return "skipped";
+    }
+    db.query("INSERT INTO person_identities (identity, person_id) VALUES (?, ?)").run(identity, self.id);
+    touchPerson(db, self.id);
+    return "added";
+  } catch (error) {
+    console.warn("[roster] could not file your identity:", error);
+    return "skipped";
+  }
+}

@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { generateExtension } from "../../src/extensions/generator";
+import { generateExtension, SYSTEM_PROMPT } from "../../src/extensions/generator";
 import type { AgentRunner, AgentRunInput, AgentRunResult } from "../../src/agent/runner";
 
 function scripted(replies: string[]): AgentRunner & { calls: AgentRunInput[] } {
@@ -127,4 +127,10 @@ test("the generator is told to export getIdentity when the target has a self-ide
   await generateExtension(runner, { kind: "create", description: "GitHub issues" }, []);
 
   expect(runner.calls[0]?.systemPrompt).toContain("getIdentity(deps)");
+});
+
+test("the generator prompt teaches participants and namespaced identities", () => {
+  expect(SYSTEM_PROMPT).toContain('"participants"');
+  expect(SYSTEM_PROMPT).toContain('"github:octocat"');
+  expect(SYSTEM_PROMPT).toContain('"email:you@example.com"');
 });

@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { test, expect, spyOn } from "bun:test";
 import { openDb, migrate } from "../../src/db";
 import * as roster from "../../src/repo/roster";
 import { RosterConflictError, RosterNotFoundError } from "../../src/domain/roster";
@@ -131,4 +131,22 @@ test("movePeopleToOrg moves only people still in No org", () => {
 
   expect(moved.map((p) => p.displayName)).toEqual(["Jide"]);
   expect(roster.getPerson(db, ana.id)?.orgId).toBe(northwind.id);
+});
+
+test("addSelfIdentity files namespaced identities onto Me and never throws", () => {
+  const db = freshDb();
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  const bob = roster.createPerson(db, { name: "Bob", orgId: null });
+  roster.addIdentity(db, bob.id, "github:bob");
+
+  expect(roster.addSelfIdentity(db, "github:me")).toBe("added");
+  expect(roster.addSelfIdentity(db, "github:me")).toBe("already");
+  expect(roster.addSelfIdentity(db, "octocat")).toBe("skipped");
+  expect(roster.addSelfIdentity(db, "github:bob")).toBe("skipped");
+  expect(roster.getSelf(db).identities).toEqual(["github:me"]);
+
+  const bare = openDb(":memory:");
+  migrate(bare); // no ensureRosterDefaults: there is no Me to file onto
+  expect(roster.addSelfIdentity(bare, "github:me")).toBe("skipped");
+  warn.mockRestore();
 });

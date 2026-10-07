@@ -11,6 +11,7 @@ import type { AgentRunner } from "../../src/agent/runner";
 import { getCursor, setCursor } from "../../src/repo/sourceState";
 import { listTasks } from "../../src/repo/tasks";
 import { getResolvedIdentity, setResolvedIdentity } from "../../src/repo/extensions";
+import { addIdentity, createPerson, ensureRosterDefaults, getPerson, getSelf } from "../../src/repo/roster";
 
 async function freshDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), "jidoka-ext-routes-"));
@@ -32,6 +33,7 @@ async function setup(
 ) {
   const db = openDb(":memory:");
   migrate(db);
+  ensureRosterDefaults(db);
   const dir = await freshDir();
   const vault = createVault({ db, fetch: options.fetch, now: options.now });
   const runAgent: AgentRunner =
@@ -960,4 +962,52 @@ test("completing a device-code connect also resolves the identity", async () => 
   );
 
   expect(getResolvedIdentity(db, "outlook2")).toBe("mailbox-at-1");
+});
+
+test("a namespaced identity from getIdentity lands on Me; a bare one doesn't", async () => {
+  const { dir, db, fetch } = await setup();
+  await writeManifest(dir, "notion", apiKeyManifest);
+  await writeIdentitySource(dir, "notion", `return "github:Octo";`);
+  await discoverExtensions(db, dir);
+
+  await fetch(
+    new Request("http://localhost/api/extensions/notion/connect/api-key", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ apiKey: "secret-1" }),
+    }),
+  );
+  expect(getSelf(db).identities).toEqual(["github:Octo"]);
+
+  await writeIdentitySource(dir, "notion", `return "plain-login";`);
+  await fetch(
+    new Request("http://localhost/api/extensions/notion/connect/api-key", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ apiKey: "secret-2" }),
+    }),
+  );
+  expect(getResolvedIdentity(db, "notion")).toBe("plain-login");
+  expect(getSelf(db).identities).toEqual(["github:Octo"]);
+});
+
+test("an identity someone else owns doesn't fail the connect or move", async () => {
+  const { dir, db, fetch } = await setup();
+  const bob = createPerson(db, { name: "Bob", orgId: null });
+  addIdentity(db, bob.id, "github:octo");
+  await writeManifest(dir, "notion", apiKeyManifest);
+  await writeIdentitySource(dir, "notion", `return "github:octo";`);
+  await discoverExtensions(db, dir);
+
+  const response = await fetch(
+    new Request("http://localhost/api/extensions/notion/connect/api-key", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ apiKey: "secret-1" }),
+    }),
+  );
+
+  expect(response.status).toBe(200);
+  expect(getPerson(db, bob.id)?.identities).toEqual(["github:octo"]);
+  expect(getSelf(db).identities).toEqual([]);
 });

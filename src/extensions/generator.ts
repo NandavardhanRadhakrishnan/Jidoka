@@ -24,7 +24,7 @@ export interface GeneratedExtension {
   source: string;
 }
 
-const SYSTEM_PROMPT = `You write Jidoka extensions: a manifest.json describing an integration and a source.ts that polls it.
+export const SYSTEM_PROMPT = `You write Jidoka extensions: a manifest.json describing an integration and a source.ts that polls it.
 
 Reply with exactly two fenced code blocks, in this order:
 
@@ -56,9 +56,10 @@ source.ts rules:
 - Export createSource(deps) -> { poll(cursor) }. Do not add TypeScript type annotations or import anything from Jidoka's own source tree — nothing resolves that path at runtime; write plain, untyped JavaScript-shaped code.
 - "deps.getToken()" returns a Promise<string> — the current valid token or API key. Call it inside poll(), never store it.
 - "poll(cursor)" takes the last cursor (a string, or null on the first call) and must return { items: RawItem[], cursor: string | null }.
-- Each RawItem is { externalId: string, title: string, body: string, url?: string, metadata?: Record<string, unknown> }. "externalId" must be stable and unique per item — it is used to avoid re-ingesting the same item twice.
+- Each RawItem is { externalId: string, title: string, body: string, url?: string, metadata?: Record<string, unknown>, participants?: { identity: string, name?: string, role: "from" | "to" | "cc" | "author" | "assignee" | "commenter" }[] }. "externalId" must be stable and unique per item — it is used to avoid re-ingesting the same item twice.
+- When items have people on them (sender, recipients, author, assignees, commenters), return them in "participants" with a role. Write each identity as namespace:value — "email:" for email addresses, the system's own name for logins and user ids (e.g. "github:octocat", "slack:U123ABC"). Prefer a stable identifier (address, login, user id) over a display name, and put the display name in "name".
 - Use "cursor" to avoid re-fetching items already seen; do not keep in-memory state across calls — poll() may run in a fresh process.
-- When the target system has an obvious "who am I" endpoint reachable with the same credential (GitHub's GET /user, Microsoft Graph's GET /me, Slack's auth.test), also export \`async function getIdentity(deps)\` — same deps — returning the connected user's identity on that system as a plain string (a login, an email address, a user id). Jidoka uses it to recognise the user's own activity, so their own comments never come back to them as new work. If there is no such endpoint, omit it. When items carry an author, include it in "metadata".`;
+- When the target system has an obvious "who am I" endpoint reachable with the same credential (GitHub's GET /user, Microsoft Graph's GET /me, Slack's auth.test), also export \`async function getIdentity(deps)\` — same deps — returning the connected user's identity on that system, namespaced the same way as participants ("github:octocat", "email:you@example.com"). Jidoka uses it to recognise the user's own activity, so their own comments never come back to them as new work. If there is no such endpoint, omit it.`;
 
 function userMessage(input: GenerateInput | FixInput, feedback?: string): string {
   const base =

@@ -7,6 +7,7 @@ import * as extensionsRepo from "../repo/extensions";
 import { removeCursor } from "../repo/sourceState";
 import { discoverExtensions } from "../extensions/discovery";
 import { loadOneExtensionSource, resolveIdentity } from "../extensions/runtime";
+import { addSelfIdentity } from "../repo/roster";
 import { generateExtension, type GeneratedExtension } from "../extensions/generator";
 import { AuthPendingError, type Vault } from "../vault/vault";
 import type { AgentRunner } from "../agent/runner";
@@ -48,10 +49,13 @@ export function createExtensionRoutes(deps: ExtensionRoutesDeps): Hono {
   const pending = new Map<string, PendingGeneration>();
 
   /** Re-resolved on every successful (re)connect so a changed credential
-   *  always gets a fresh identity; a null result keeps whatever was stored. */
+   *  always gets a fresh identity; a null result keeps whatever was stored.
+   *  A namespaced identity is also filed onto Me in the roster. */
   async function refreshIdentity(id: string): Promise<void> {
     const identity = await resolveIdentity(deps.db, deps.extensionsDir, deps.vault, id);
-    if (identity) extensionsRepo.setResolvedIdentity(deps.db, id, identity);
+    if (!identity) return;
+    extensionsRepo.setResolvedIdentity(deps.db, id, identity);
+    addSelfIdentity(deps.db, identity);
   }
 
   function uniqueId(baseId: string): string {
