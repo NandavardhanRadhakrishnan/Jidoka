@@ -37,6 +37,21 @@ export const ICONS: Record<string, string[]> = {
   "rotate-ccw": ["M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8", "M3 3v5h5"],
   "chevron-down": ["m6 9 6 6 6-6"],
   "chevron-up": ["m18 15-6-6-6 6"],
+  "chevron-right": ["m9 18 6-6-6-6"],
+  "arrow-left": ["m12 19-7-7 7-7", "M19 12H5"],
+  x: ["M18 6 6 18", "m6 6 12 12"],
+  users: [
+    "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2",
+    "M9 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8z",
+    "M22 21v-2a4 4 0 0 0-3-3.87",
+    "M16 3.13a4 4 0 0 1 0 7.75",
+  ],
+  "user-plus": [
+    "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2",
+    "M9 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8z",
+    "M19 8v6",
+    "M22 11h-6",
+  ],
 };
 
 const FALLBACK_ICON = ICONS.ai as string[];

@@ -432,3 +432,79 @@ textarea.input { min-height: 90px; resize: vertical; }
   .types-screen { grid-template-columns: 1fr; }
   .panes { grid-template-columns: 1fr; }
 }
+
+/* — roster: people & orgs — */
+.btn-sm { font-size: 12px; padding: 5px 10px; }
+.btn-xs { font-size: 11px; padding: 2px 4px; }
+.people-screen { display: grid; grid-template-columns: 280px minmax(0, 1fr); height: 100%; min-height: 0; }
+.org-list { border-right: 2px solid var(--color-divider); padding: 14px 0 24px; overflow-y: auto; min-height: 0; display: flex; flex-direction: column; }
+.org-row { display: flex; flex-direction: column; gap: 4px; text-align: left; width: 100%; border: 0; border-left: 3px solid transparent; background: transparent; padding: 11px 14px; cursor: pointer; color: var(--color-text); }
+.org-row:hover { background: color-mix(in srgb, var(--color-text) 6%, transparent); }
+.org-row.on { border-left-color: var(--color-accent); background: var(--color-surface); }
+.org-row-line { display: flex; align-items: center; gap: 8px; }
+.org-row .name { font-family: var(--font-heading); font-weight: 800; font-size: 14px; }
+.org-row .count { margin-left: auto; font-size: 10.5px; color: var(--color-neutral-600); }
+.org-row .domains { font-size: 11px; color: var(--color-neutral-600); }
+.org-row.no-org { border-top: 1px solid var(--color-divider); margin-top: 6px; }
+.org-row.no-org .name { color: var(--color-neutral-700); }
+.org-list-foot { padding: 12px 14px 0; }
+.yours-badge, .me-badge, .org-badge { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.04em; padding: 0 6px; line-height: 16px; white-space: nowrap; flex-shrink: 0; }
+.yours-badge { background: var(--color-neutral-900); color: var(--color-bg); }
+.me-badge { border: 1px solid var(--color-accent-700); color: var(--color-accent-700); line-height: 14px; }
+.org-badge.org-yours { background: var(--color-neutral-900); color: var(--color-bg); }
+.org-badge.org-external { background: var(--color-accent-100); color: var(--color-accent-800); }
+.org-badge.org-none { border: 1px solid var(--color-divider); color: var(--color-neutral-600); line-height: 14px; }
+.roster-detail { padding: 18px 20px 48px; overflow-y: auto; min-height: 0; }
+.roster-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.roster-head .roster-danger { margin-left: auto; }
+.roster-danger { color: var(--color-accent-700); }
+.roster-static-title { margin: 0; }
+.title-input { font-family: var(--font-heading); font-weight: 800; font-size: 22px; letter-spacing: -0.015em; background: transparent; border-color: transparent; padding: 2px 6px; margin-left: -7px; max-width: 440px; width: 100%; }
+.title-input:hover { border-color: var(--color-divider); }
+.title-input:focus-visible { border-color: var(--color-accent); background: var(--color-surface); }
+.roster-desc { font-size: 13px; color: var(--color-neutral-800); margin: 6px 0 0; }
+.roster-back { color: var(--color-neutral-700); padding-left: 0; margin-bottom: 8px; }
+.roster-section { display: flex; flex-direction: column; gap: 10px; margin-top: 22px; }
+.roster-section h6, .drawer-section-head h6 { margin: 0; }
+.roster-section-head { display: flex; align-items: baseline; gap: 8px; }
+.roster-section-head .count, .drawer-section-head .count { font-size: 11px; color: var(--color-neutral-600); }
+.roster-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.roster-chip { font-size: 11.5px; display: inline-flex; align-items: center; gap: 2px; border: 1px solid var(--color-divider); background: var(--color-surface); padding: 1px 1px 1px 8px; }
+.roster-chip-remove { width: 22px; height: 22px; display: grid; place-items: center; border: 0; background: transparent; color: var(--color-neutral-600); cursor: pointer; }
+.roster-chip-remove:hover { background: color-mix(in srgb, var(--color-accent) 10%, transparent); color: var(--color-accent-700); }
+.roster-add-row { display: flex; gap: 8px; max-width: 440px; align-items: center; }
+.roster-add-row .input { min-height: 32px; font-size: 12.5px; flex: 1; }
+.roster-note { font-size: 11px; color: var(--color-neutral-600); margin: 0; }
+.roster-intro { font-size: 13px; color: var(--color-neutral-800); padding: 10px 12px; border: 1px solid var(--color-divider); background: var(--color-surface); margin: 14px 0 0; }
+.roster-suggestion { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--color-neutral-800); padding: 10px 12px; border: 1px solid var(--color-divider); background: var(--color-surface); max-width: 440px; }
+.roster-suggestion p { margin: 0; }
+.roster-actions { display: flex; align-items: center; gap: 8px; }
+.roster-person-row { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; border: 0; border-bottom: 1px solid var(--color-divider); background: transparent; padding: 9px 4px; cursor: pointer; color: var(--color-text); }
+.roster-person-row:hover { background: color-mix(in srgb, var(--color-text) 6%, transparent); }
+.roster-person-row .name { font-family: var(--font-heading); font-weight: 800; font-size: 13.5px; }
+.roster-person-row .ident { flex: 1; min-width: 0; font-size: 11px; color: var(--color-neutral-600); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.roster-field-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.roster-field { display: flex; flex-direction: column; gap: 4px; }
+.roster-label { font-size: 11px; color: var(--color-neutral-700); }
+.drawer-section-head { display: flex; align-items: center; gap: 8px; min-height: 24px; }
+.drawer-section-head .slot { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.participant-list { border: 1px solid var(--color-divider); background: var(--color-surface); display: flex; flex-direction: column; }
+.participant-item + .participant-item { border-top: 1px solid var(--color-divider); }
+.participant-row { display: flex; align-items: center; gap: 8px; padding: 6px 10px; min-height: 36px; }
+.participant-row .role { font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--color-neutral-600); width: 76px; flex: none; }
+.participant-row .name { font-family: var(--font-heading); font-weight: 800; font-size: 13px; white-space: nowrap; }
+.participant-row .ident { font-size: 11px; color: var(--color-neutral-600); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.participant-row .raw-ident { font-size: 11.5px; color: var(--color-text); }
+.participant-row .as { font-size: 11px; color: var(--color-neutral-600); }
+.participant-row .participant-action { margin-left: auto; }
+.participant-add-form { display: flex; flex-direction: column; gap: 10px; padding: 10px 12px 12px; border-top: 1px solid var(--color-divider); background: var(--color-bg); }
+.participant-picker { display: flex; flex-direction: column; gap: 6px; }
+.participant-pick { display: flex; align-items: center; gap: 8px; text-align: left; width: 100%; border: 1px solid var(--color-divider); background: var(--color-bg); padding: 7px 9px; cursor: pointer; color: var(--color-text); }
+.participant-pick:hover { border-color: var(--color-accent); background: var(--color-accent-100); }
+.participant-pick .name { font-family: var(--font-heading); font-weight: 800; font-size: 13px; }
+.participant-pick .ident { font-size: 11px; color: var(--color-neutral-600); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.participant-pick.create { border-style: dashed; background: transparent; flex-direction: column; align-items: flex-start; gap: 2px; }
+
+@media (max-width: 900px) {
+  .people-screen { grid-template-columns: 1fr; }
+}

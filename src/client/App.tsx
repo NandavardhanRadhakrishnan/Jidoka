@@ -7,17 +7,19 @@ import { NewTask } from "./NewTask";
 import { SignIn } from "./SignIn";
 import { TaskDetail } from "./TaskDetail";
 import { Extensions } from "./Extensions";
+import { People } from "./People";
 import { Rules } from "./Rules";
 import { Settings } from "./Settings";
 import { Icon } from "./icons";
 import { LANE_OF } from "./columns";
 import { taskUrl, readTaskId } from "./taskUrl";
 
-type Screen = "board" | "types" | "extensions" | "settings";
+type Screen = "board" | "types" | "people" | "extensions" | "settings";
 
 const NAV: { key: Screen; label: string; icon: string }[] = [
   { key: "board", label: "Board", icon: "board" },
   { key: "types", label: "Types & rules", icon: "rules" },
+  { key: "people", label: "People", icon: "users" },
   { key: "extensions", label: "Extensions", icon: "plug" },
   { key: "settings", label: "Settings", icon: "settings" },
 ];
@@ -25,12 +27,14 @@ const NAV: { key: Screen; label: string; icon: string }[] = [
 const SCREEN_TITLE: Record<Screen, string> = {
   board: "Board",
   types: "Types & rules",
+  people: "People",
   extensions: "Extensions & sources",
   settings: "Settings",
 };
 
 export function App() {
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [peopleSummary, setPeopleSummary] = useState("");
   const [types, setTypes] = useState<TypeWithRules[]>([]);
   const [settings, setSettings] = useState<EffectiveSettings | null>(null);
   const [screen, setScreen] = useState<Screen>("board");
@@ -160,6 +164,7 @@ export function App() {
       <main className="app-main">
         <header className="app-header">
           <h4>{SCREEN_TITLE[screen]}</h4>
+          {screen === "people" && peopleSummary && <span className="sub">{peopleSummary}</span>}
           {screen === "board" && (
             <span className="board-summary">
               <span className="mono need-pill">{needsCount} need you</span>
@@ -212,6 +217,8 @@ export function App() {
             />
           ) : screen === "types" ? (
             <Rules />
+          ) : screen === "people" ? (
+            <People onSummaryChange={setPeopleSummary} />
           ) : screen === "extensions" ? (
             <Extensions />
           ) : (
