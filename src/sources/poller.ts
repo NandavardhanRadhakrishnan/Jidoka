@@ -4,6 +4,8 @@ import { findTaskBySource, insertTask } from "../repo/tasks";
 import { wasMerged } from "../repo/mergedSourceItems";
 import { getCursor, setCursor } from "../repo/sourceState";
 import type { RawItem, TaskSource } from "./types";
+import { isParticipantRole, normalizeIdentity, type SourceParticipant } from "../domain/roster";
+import { upsertSourceParticipants } from "../repo/participants";
 
 export type OnTask = (task: Task) => Promise<void>;
 /** Called when a source reports a revision change on a task that already
@@ -16,6 +18,25 @@ export type OnTaskChanged = (task: Task, item: RawItem) => Promise<void>;
  *  that was side-chatter can become relevant later (it gets re-triaged). */
 const REOPENABLE_STATES = new Set<TaskState>(["done", "assigned_ai", "assigned_human", "dismissed"]);
 
+/** The valid participants of a raw item. Sources are third-party code, so
+ *  anything malformed (no namespace, unknown role) is dropped and counted —
+ *  bad participant data must never fail a poll. */
+export function sanitizeParticipants(raw: unknown): { valid: SourceParticipant[]; dropped: number } {
+  if (!Array.isArray(raw)) return { valid: [], dropped: 0 };
+  const valid: SourceParticipant[] = [];
+  let dropped = 0;
+  for (const entry of raw as Partial<SourceParticipant>[]) {
+    const identity = typeof entry?.identity === "string" ? normalizeIdentity(entry.identity) : null;
+    if (!identity || !isParticipantRole(entry.role)) {
+      dropped++;
+      continue;
+    }
+    const name = typeof entry.name === "string" && entry.name.trim() ? entry.name.trim() : undefined;
+    valid.push({ identity, role: entry.role, ...(name ? { name } : {}) });
+  }
+  return { valid, dropped };
+}
+
 export async function pollOnce(
   db: Database,
   source: TaskSource,
@@ -27,9 +48,17 @@ export async function pollOnce(
 
   const created: Task[] = [];
   const reopened: { task: Task; item: RawItem }[] = [];
+  let droppedParticipants = 0;
   for (const item of result.items) {
+    const { valid: participants, dropped } = sanitizeParticipants(item.participants);
+    droppedParticipants += dropped;
+
     const existing = findTaskBySource(db, source.id, item.externalId);
     if (existing) {
+      // Every sighting, regardless of state or revision: the upsert is
+      // idempotent, and a new commenter is worth recording even when the
+      // relevance check later declines to reopen the task.
+      if (participants.length) upsertSourceParticipants(db, existing.id, participants);
       if (
         item.revision &&
         item.revision !== (existing.context.revision as string | undefined) &&
@@ -41,16 +70,23 @@ export async function pollOnce(
     }
     if (wasMerged(db, source.id, item.externalId)) continue;
     created.push(
-      insertTask(db, {
-        sourceId: source.id,
-        externalId: item.externalId,
-        url: item.url ?? null,
-        title: item.title,
-        body: item.body,
-        metadata: item.metadata ?? {},
-        revision: item.revision,
-      }),
+      db.transaction(() => {
+        const task = insertTask(db, {
+          sourceId: source.id,
+          externalId: item.externalId,
+          url: item.url ?? null,
+          title: item.title,
+          body: item.body,
+          metadata: item.metadata ?? {},
+          revision: item.revision,
+        });
+        upsertSourceParticipants(db, task.id, participants);
+        return task;
+      })(),
     );
+  }
+  if (droppedParticipants) {
+    console.warn(`[poller] ${source.id}: dropped ${droppedParticipants} malformed participant(s)`);
   }
 
   setCursor(db, source.id, result.cursor);

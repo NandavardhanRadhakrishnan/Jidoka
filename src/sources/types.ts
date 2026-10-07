@@ -1,3 +1,5 @@
+import type { SourceParticipant } from "../domain/roster";
+
 export interface RawItem {
   externalId: string;
   title: string;
@@ -10,6 +12,12 @@ export interface RawItem {
    *  stored, to decide whether an already-known item has genuinely changed.
    *  Omit it and this item never reopens an existing task automatically. */
   revision?: string;
+  /** People on this item, as the source system reports them. Identities are
+   *  namespaced by system ("email:bob@acme.test", "github:bobsmith"); prefer
+   *  a stable identifier (address, login) over a display name. Omit when the
+   *  system reports nobody; the user can still tag people by hand. Malformed
+   *  entries are dropped by the poller, never fail a poll. */
+  participants?: SourceParticipant[];
 }
 
 export interface PollResult {

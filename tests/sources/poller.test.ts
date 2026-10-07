@@ -1,4 +1,7 @@
-import { test, expect } from "bun:test";
+import { test, expect, spyOn } from "bun:test";
+import { listParticipants } from "../../src/repo/participants";
+import { addIdentity, createPerson, ensureRosterDefaults } from "../../src/repo/roster";
+import type { SourceParticipant } from "../../src/domain/roster";
 import { openDb, migrate } from "../../src/db";
 import { pollOnce, startPoller } from "../../src/sources/poller";
 import { getCursor } from "../../src/repo/sourceState";
@@ -434,4 +437,90 @@ test("pollOnce calls onTaskChanged for a dismissed task whose revision changed, 
   });
 
   expect(called).toBe(true);
+});
+
+test("pollOnce stores a new item's participants, normalized and resolved", async () => {
+  const db = freshDb();
+  ensureRosterDefaults(db);
+  const bob = createPerson(db, { name: "Bob", orgId: null });
+  addIdentity(db, bob.id, "email:bob@acme.test");
+  const source = fakeSource([
+    {
+      items: [
+        {
+          externalId: "m1",
+          title: "One",
+          body: "first",
+          participants: [
+            { identity: "Email:Bob@Acme.TEST", name: "Bob S", role: "from" },
+            { identity: "email:ana@acme.test", role: "cc" },
+          ],
+        },
+      ],
+      cursor: "c1",
+    },
+  ]);
+
+  const [task] = await pollOnce(db, source, async () => {});
+
+  const rows = listParticipants(db, task!.id);
+  expect(rows.map((r) => [r.identity, r.role, r.sourceName])).toEqual([
+    ["email:bob@acme.test", "from", "Bob S"],
+    ["email:ana@acme.test", "cc", null],
+  ]);
+  expect(rows[0]?.person?.displayName).toBe("Bob");
+});
+
+test("pollOnce drops malformed participants with one warning and keeps the rest", async () => {
+  const db = freshDb();
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  const source = fakeSource([
+    {
+      items: [
+        {
+          externalId: "m1",
+          title: "One",
+          body: "first",
+          participants: [
+            { identity: "bob", role: "from" },
+            { identity: "email:x@y.test", role: "boss" } as unknown as SourceParticipant,
+            { identity: "github:ok", role: "author" },
+          ],
+        },
+      ],
+      cursor: "c1",
+    },
+  ]);
+
+  const [task] = await pollOnce(db, source, async () => {});
+
+  expect(listParticipants(db, task!.id).map((r) => r.identity)).toEqual(["github:ok"]);
+  expect(warn).toHaveBeenCalledTimes(1);
+  expect(String(warn.mock.calls[0]?.[0])).toContain("fake");
+  warn.mockRestore();
+});
+
+test("pollOnce merges participants for an item it already has, without duplicates", async () => {
+  const db = freshDb();
+  const item = { externalId: "m1", title: "One", body: "first" };
+  const source = fakeSource([
+    { items: [{ ...item, participants: [{ identity: "github:bob", role: "author" as const }] }], cursor: "c1" },
+    {
+      items: [
+        {
+          ...item,
+          participants: [
+            { identity: "github:bob", role: "author" as const },
+            { identity: "github:carol", role: "commenter" as const },
+          ],
+        },
+      ],
+      cursor: "c2",
+    },
+  ]);
+
+  const [task] = await pollOnce(db, source, async () => {});
+  await pollOnce(db, source, async () => {});
+
+  expect(listParticipants(db, task!.id).map((r) => r.identity)).toEqual(["github:bob", "github:carol"]);
 });
