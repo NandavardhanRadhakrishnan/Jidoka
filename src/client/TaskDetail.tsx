@@ -7,6 +7,7 @@ import { Handoff, openUrlTargets } from "./Handoff";
 import { daysUntil, deadlineUrgency, priorityBadge, taskAge } from "./columns";
 import { Icon } from "./icons";
 import { SelectTrigger } from "./SelectTrigger";
+import { TaskPeople } from "./TaskPeople";
 
 interface StepLogEntry {
   stepId: string;
@@ -815,6 +816,8 @@ export function TaskDetail({
               ))}
             </section>
           )}
+
+          <TaskPeople taskId={task.id} />
 
           {task.body && (
             <section className="drawer-section">
