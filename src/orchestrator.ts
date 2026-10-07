@@ -7,6 +7,7 @@ import type { Rule } from "./domain/rule";
 import { resolvePriority, type Priority } from "./domain/priority";
 import { getTask, listTasks, updateTask, deleteTask } from "./repo/tasks";
 import { recordMergedSourceItem } from "./repo/mergedSourceItems";
+import { moveParticipants } from "./repo/participants";
 import { recordAudit } from "./repo/audit";
 import { getResolvedIdentity } from "./repo/extensions";
 import {
@@ -727,6 +728,8 @@ export function mergeTasks(deps: AppDeps, duplicateTaskId: string, intoTaskId: s
     typeId: target.typeId,
     data: { duplicateTaskId: duplicate.id, sourceId: duplicate.sourceId, externalId: duplicate.externalId },
   });
+  // Deleting the duplicate cascades its participants away; keep them on the target.
+  moveParticipants(deps.db, duplicate.id, target.id);
   deleteTask(deps.db, duplicate.id);
   return updated;
 }

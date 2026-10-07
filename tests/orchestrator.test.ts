@@ -26,6 +26,7 @@ import {
   type AppDeps,
 } from "../src/orchestrator";
 import { insertHint } from "../src/repo/hints";
+import { listParticipants, upsertSourceParticipants } from "../src/repo/participants";
 import { listAudit } from "../src/repo/audit";
 import { upsertValid, setResolvedIdentity } from "../src/repo/extensions";
 import type { AiProvider } from "../src/ai/provider";
@@ -1478,4 +1479,15 @@ test("a dismissed task whose source item changes is re-triaged with the new cont
   expect(result.context.revision).toBe("rev-2");
   expect(result.typeId).toBe(type.id);
   expect(result.state).toBe("needs_onboarding");
+});
+
+test("mergeTasks keeps the duplicate's participants on the surviving task", () => {
+  const db = freshDb();
+  const target = insertTask(db, { ...sample, externalId: "m0" });
+  const dup = insertTask(db, { ...sample, externalId: "m1" });
+  upsertSourceParticipants(db, dup.id, [{ identity: "email:bob@acme.test", role: "from" }]);
+
+  mergeTasks(deps(db, []), dup.id, target.id);
+
+  expect(listParticipants(db, target.id).map((p) => p.identity)).toEqual(["email:bob@acme.test"]);
 });
