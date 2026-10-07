@@ -36,7 +36,7 @@ Types are discovered one task at a time and the registry starts empty. Competito
 
 ### 5. Named assignees — M
 
-`assign` targets only "human"; in a small firm that means a specific person or an outside party (the accountant, a VA). The reference data sets spec and plan are written but not built: `docs/superpowers/specs/2026-09-19-reference-data-sets-design.md`, `docs/superpowers/plans/2026-09-19-reference-library.md` (team-roster use case). Remaining design question: how `assign` names someone from the roster.
+`assign` targets only "human"; in a small firm that means a specific person or an outside party (the accountant, a VA). The roster (people, orgs, identities) shipped; see `docs/superpowers/specs/2026-10-06-roster-design.md`. Remaining design question: how `assign` names someone from the roster.
 
 ### 6. Per-type stats — S build, needs a UI design first
 
