@@ -1,35 +1,5 @@
 import type { SourceParticipant } from "../domain/roster";
 
-export interface LegacyRawItem {
-  externalId: string;
-  title: string;
-  body: string;
-  url?: string;
-  metadata?: Record<string, unknown>;
-  /** Opaque token the source defines meaning for (a revision number, a
-   *  last-modified timestamp, a hash of whatever fields that connector cares
-   *  about). Jidoka never inspects it — only compares it to what it last
-   *  stored, to decide whether an already-known item has genuinely changed.
-   *  Omit it and this item never reopens an existing task automatically. */
-  revision?: string;
-  /** People on this item, as the source system reports them. Identities are
-   *  namespaced by system ("email:bob@acme.test", "github:bobsmith"); prefer
-   *  a stable identifier (address, login) over a display name. Omit when the
-   *  system reports nobody; the user can still tag people by hand. Malformed
-   *  entries are dropped by the poller, never fail a poll. */
-  participants?: SourceParticipant[];
-}
-
-export interface LegacyPollResult {
-  items: LegacyRawItem[];
-  cursor: string | null;
-}
-
-export interface LegacyTaskSource {
-  readonly id: string;
-  poll(cursor: string | null): Promise<LegacyPollResult>;
-}
-
 export interface SourceItem {
   /** Immutable and taken from the item itself: a Message-ID, a Gmail message
    *  id, an issue node id. Never a mailbox position (IMAP UID) or a made-up
@@ -47,6 +17,11 @@ export interface SourceItem {
   body: string;
   url?: string;
   metadata?: Record<string, unknown>;
+  /** People on this item, as the source system reports them. Identities are
+   *  namespaced by system ("email:bob@acme.test", "github:bobsmith"); prefer
+   *  a stable identifier (address, login) over a display name. Omit when the
+   *  system reports nobody; the user can still tag people by hand. Malformed
+   *  entries are dropped by the poller, never fail a poll. */
   participants?: SourceParticipant[];
 }
 

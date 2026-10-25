@@ -22,7 +22,6 @@ export interface Settings {
     maxBudgetUsd?: number;
   };
   mcpServers?: McpServerConfig[];
-  sampleDir?: string;
   extensionsDir?: string;
   pollIntervalMs?: number;
   terminalCommand?: string;
@@ -50,7 +49,6 @@ export const SettingsSchema = z.object({
   mcpServers: z
     .array(z.object({ name: z.string(), command: z.string(), args: z.array(z.string()) }))
     .optional(),
-  sampleDir: z.string().optional(),
   extensionsDir: z.string().optional(),
   pollIntervalMs: z.number().int().positive().optional(),
   terminalCommand: z.string().optional(),

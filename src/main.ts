@@ -18,35 +18,9 @@ import { createAgentSdkRunner } from "./agent/claudeAgentSdk";
 import { withConcurrencyLimit } from "./agent/limit";
 import { onTaskIngested, onTaskChanged, type AppDeps } from "./orchestrator";
 import { startPoller, type PollHooks } from "./sources/poller";
-import { createSampleFolderSource } from "./sources/sample/folder";
-import type { LegacyTaskSource, TaskSource } from "./sources/types";
 import { loadEnabledExtensionSources } from "./extensions/runtime";
 import { getSettings } from "./repo/settings";
 import { purgeExpiredAudit } from "./repo/audit";
-
-/** Temporary (deleted in Task 8 with the sample source): presents the legacy
- *  sample-folder source as a list() source. Each file becomes an item keyed by
- *  its externalId; files carry no date, so occurredAt is the time of listing. */
-function legacyAsListSource(legacy: LegacyTaskSource): TaskSource {
-  return {
-    id: legacy.id,
-    async list() {
-      const { items } = await legacy.poll(null);
-      return {
-        items: items.map((item) => ({
-          key: item.externalId,
-          occurredAt: new Date().toISOString(),
-          title: item.title,
-          body: item.body,
-          ...(item.url ? { url: item.url } : {}),
-          ...(item.metadata ? { metadata: item.metadata } : {}),
-          ...(item.participants ? { participants: item.participants } : {}),
-        })),
-        failures: [],
-      };
-    },
-  };
-}
 
 /** The ingestion hooks shared by the background poller and the extension routes. */
 function makePollHooks(deps: AppDeps): PollHooks {
@@ -204,25 +178,15 @@ if (import.meta.main) {
     );
   }
 
-  const sources: TaskSource[] = [];
-  if (app.config.sampleDir) {
-    sources.push(legacyAsListSource(createSampleFolderSource({ dir: app.config.sampleDir })));
-    console.log(`Sample source watching ${app.config.sampleDir}`);
-  }
-
+  // Every source is an extension, loaded fresh on each tick.
   startPoller(
     app.deps.db,
-    sources,
+    [],
     makePollHooks(app.deps),
     app.config.pollIntervalMs,
     () => loadEnabledExtensionSources(app.deps.db, app.config.extensionsDir, app.vault),
   );
-  if (!sources.length) {
-    console.warn(
-      "No static sources configured — set JIDOKA_SAMPLE_DIR, install an extension, " +
-        "or add tasks from the board",
-    );
-  }
+  console.warn("No static sources configured — add a task from the board, or install an extension");
 
   // Retention is read live from settings each run, so changing it in the
   // Settings screen takes effect on the next sweep without a restart.

@@ -144,6 +144,16 @@ test("the generator prompt teaches the list({ since }) contract and its key rule
   expect(SYSTEM_PROMPT).not.toContain("poll(cursor)");
 });
 
+test("the generator prompt asks for unique keys, unkeyed failures and one key per call", () => {
+  expect(SYSTEM_PROMPT).toContain("unique within the source");
+  expect(SYSTEM_PROMPT).toContain("prefix with the repo or kind when ids can repeat (e.g. `owner/repo#12`)");
+  expect(SYSTEM_PROMPT).toContain(
+    "failures.push({ key, error })`, or `failures.push({ error })` when there is no readable id",
+  );
+  expect(SYSTEM_PROMPT).not.toContain("(no readable id, a missing field): failures.push({ key, error })");
+  expect(SYSTEM_PROMPT).toContain("return each key once per call");
+});
+
 test("the generator prompt carries the key table from the spec", () => {
   for (const source of ["Gmail API", "X-GM-MSGID", "internetMessageId", "conversationId", "Message-ID", "thread_ts", "Ledgers"]) {
     expect(SYSTEM_PROMPT).toContain(source);

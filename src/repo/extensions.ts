@@ -100,7 +100,7 @@ export function setResolvedIdentity(db: Database, id: string, identity: string):
   db.query("UPDATE extensions SET resolved_identity = ? WHERE id = ?").run(identity, id);
 }
 
-/** Null for sources with no extension record (sample folder, manual tasks) or
+/** Null for sources with no extension record (manual tasks, removed sources) or
  *  whose extension never resolved one. */
 export function getResolvedIdentity(db: Database, id: string): string | null {
   const row = db.query("SELECT resolved_identity FROM extensions WHERE id = ?").get(id) as

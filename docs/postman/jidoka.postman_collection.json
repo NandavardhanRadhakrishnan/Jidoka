@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Jidoka",
-    "description": "Try Jidoka end to end: inject a task, watch AI triage discover a task type, onboard that type by describing how it should be handled, activate the generated rule, and see the waiting task get processed.\n\nStart the server first:\n\n    export ANTHROPIC_API_KEY=sk-ant-...\n    export JIDOKA_SAMPLE_DIR=./samples\n    bun run dev\n\nRun the requests in order. Each one stores the ids the next request needs in collection variables (taskId, typeId, ruleId), so you can just keep clicking Send.",
+    "description": "Try Jidoka end to end: inject a task, watch AI triage discover a task type, onboard that type by describing how it should be handled, activate the generated rule, and see the waiting task get processed.\n\nStart the server first:\n\n    export ANTHROPIC_API_KEY=sk-ant-...\n    bun run dev\n\nRun the requests in order. Each one stores the ids the next request needs in collection variables (taskId, typeId, ruleId), so you can just keep clicking Send.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [

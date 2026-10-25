@@ -1,8 +1,6 @@
 import type { Database } from "bun:sqlite";
-import type { Task, TaskState } from "../domain/task";
+import type { Task } from "../domain/task";
 import { findTaskBySource, getTask, insertTask, updateTask } from "../repo/tasks";
-import { wasMerged } from "../repo/mergedSourceItems";
-import { getCursor, setCursor } from "../repo/sourceState";
 import { fileFailure, fileIngested, getItemRow, rowsForTask, taskForThread, touchSeen } from "../repo/sourceItems";
 import {
   finishPoll,
@@ -15,20 +13,9 @@ import {
 } from "../repo/sourcePolls";
 import { checkItem, checkList, MAX_KEY } from "./checks";
 import { composeTask } from "./compose";
-import type { LegacyRawItem, LegacyTaskSource, ListResult, SourceItem, TaskSource } from "./types";
+import type { ListResult, SourceItem, TaskSource } from "./types";
 import { isParticipantRole, normalizeIdentity, type SourceParticipant } from "../domain/roster";
 import { upsertSourceParticipants } from "../repo/participants";
-
-export type OnTask = (task: Task) => Promise<void>;
-/** Called when a source reports a revision change on a task that already
- *  passed through a rule at least once (done, or currently assigned). */
-export type OnTaskChanged = (task: Task, item: LegacyRawItem) => Promise<void>;
-
-/** States a revision change is allowed to reopen. Excludes `processing` (a
- *  rule is actively running) and every pre-triage state (no rule has run yet,
- *  so there's nothing to follow up on). `dismissed` is included so a thread
- *  that was side-chatter can become relevant later (it gets re-triaged). */
-const REOPENABLE_STATES = new Set<TaskState>(["done", "assigned_ai", "assigned_human", "dismissed"]);
 
 /** The valid participants of a raw item. Sources are third-party code, so
  *  anything malformed (no namespace, unknown role) is dropped and counted —
@@ -47,65 +34,6 @@ export function sanitizeParticipants(raw: unknown): { valid: SourceParticipant[]
     valid.push({ identity, role: entry.role, ...(name ? { name } : {}) });
   }
   return { valid, dropped };
-}
-
-export async function pollOnce(
-  db: Database,
-  source: LegacyTaskSource,
-  onTask: OnTask,
-  onTaskChanged?: OnTaskChanged,
-): Promise<Task[]> {
-  const cursor = getCursor(db, source.id);
-  const result = await source.poll(cursor);
-
-  const created: Task[] = [];
-  const reopened: { task: Task; item: LegacyRawItem }[] = [];
-  let droppedParticipants = 0;
-  for (const item of result.items) {
-    const { valid: participants, dropped } = sanitizeParticipants(item.participants);
-    droppedParticipants += dropped;
-
-    const existing = findTaskBySource(db, source.id, item.externalId);
-    if (existing) {
-      // Every sighting, regardless of state or revision: the upsert is
-      // idempotent, and a new commenter is worth recording even when the
-      // relevance check later declines to reopen the task.
-      if (participants.length) upsertSourceParticipants(db, existing.id, participants);
-      if (
-        item.revision &&
-        item.revision !== (existing.context.revision as string | undefined) &&
-        REOPENABLE_STATES.has(existing.state)
-      ) {
-        reopened.push({ task: existing, item });
-      }
-      continue;
-    }
-    if (wasMerged(db, source.id, item.externalId)) continue;
-    created.push(
-      db.transaction(() => {
-        const task = insertTask(db, {
-          sourceId: source.id,
-          externalId: item.externalId,
-          url: item.url ?? null,
-          title: item.title,
-          body: item.body,
-          metadata: item.metadata ?? {},
-          revision: item.revision,
-        });
-        upsertSourceParticipants(db, task.id, participants);
-        return task;
-      })(),
-    );
-  }
-  if (droppedParticipants) {
-    console.warn(`[poller] ${source.id}: dropped ${droppedParticipants} malformed participant(s)`);
-  }
-
-  setCursor(db, source.id, result.cursor);
-
-  for (const task of created) await onTask(task);
-  for (const { task, item } of reopened) await onTaskChanged?.(task, item);
-  return created;
 }
 
 /** Polls every source once per interval through `pollSource`, one source at a
@@ -214,6 +142,10 @@ type Filed =
       kind: "new" | "changed";
       taskId: string;
       createdTask: boolean;
+      /** Joined a task created before the item record existed (found by its
+       *  external id, with no item rows). Filing it is an adoption, not a
+       *  change: the task's content is rebuilt but no change flow runs. */
+      adopted: boolean;
       /** The key had no row at all before this item. */
       unseen: boolean;
       item: SourceItem;
@@ -275,11 +207,19 @@ function normalize(raw: SourceItem): SourceItem {
 }
 
 /** The task a new item's thread already lives on: through the item record
- *  first, then a task created before the item record existed. */
-function taskForNewItem(db: Database, sourceId: string, threadKey: string): string | null {
+ *  first, then by the task's external id. A task found that way with no item
+ *  rows predates the item record, so filing onto it is an adoption. (One with
+ *  rows is an unthreaded item's task, whose key a reply uses as its thread.) */
+function taskForNewItem(
+  db: Database,
+  sourceId: string,
+  threadKey: string,
+): { taskId: string; adopted: boolean } | null {
   const viaRows = taskForThread(db, sourceId, threadKey);
-  if (viaRows && getTask(db, viaRows)) return viaRows;
-  return findTaskBySource(db, sourceId, threadKey)?.id ?? null;
+  if (viaRows && getTask(db, viaRows)) return { taskId: viaRows, adopted: false };
+  const byExternalId = findTaskBySource(db, sourceId, threadKey);
+  if (!byExternalId) return null;
+  return { taskId: byExternalId.id, adopted: rowsForTask(db, byExternalId.id).length === 0 };
 }
 
 /** Files one checked item. Runs inside the item's transaction. */
@@ -299,7 +239,12 @@ function fileItem(db: Database, sourceId: string, raw: SourceItem): Filed {
   // A changed item stays on its task. A new item, or a changed one whose task
   // was deleted, is routed by its thread.
   const threadKey = base.threadKey ?? base.key;
-  let taskId = known?.taskId && getTask(db, known.taskId) ? known.taskId : taskForNewItem(db, sourceId, threadKey);
+  const routed =
+    known?.taskId && getTask(db, known.taskId)
+      ? { taskId: known.taskId, adopted: false }
+      : taskForNewItem(db, sourceId, threadKey);
+  let taskId = routed?.taskId ?? null;
+  const adopted = routed?.adopted ?? false;
   let createdTask = false;
   if (!taskId) {
     taskId = insertTask(db, {
@@ -318,7 +263,7 @@ function fileItem(db: Database, sourceId: string, raw: SourceItem): Filed {
   fileIngested(db, sourceId, item, taskId);
   upsertSourceParticipants(db, taskId, participants);
   updateTask(db, taskId, composeTask(rowsForTask(db, taskId)));
-  return { kind: known ? "changed" : "new", taskId, createdTask, unseen: !row, item, dropped };
+  return { kind: known ? "changed" : "new", taskId, createdTask, adopted, unseen: !row, item, dropped };
 }
 
 async function runList(
@@ -350,6 +295,9 @@ async function runList(
   }
 
   const created = new Set<string>();
+  // Tasks adopted in this run get no change flow for the rest of the run: the
+  // run's later items in that thread are part of the same adoption.
+  const adopted = new Set<string>();
   const changes = new Map<string, SourceItem[]>();
   const filingErrors: string[] = [];
   let recovered = 0;
@@ -391,7 +339,8 @@ async function runList(
       if (filed.unseen) recovered++;
       droppedParticipants += filed.dropped;
       if (filed.createdTask) created.add(filed.taskId);
-      else if (!created.has(filed.taskId)) {
+      else if (filed.adopted) adopted.add(filed.taskId);
+      else if (!created.has(filed.taskId) && !adopted.has(filed.taskId)) {
         changes.set(filed.taskId, [...(changes.get(filed.taskId) ?? []), filed.item]);
       }
     }

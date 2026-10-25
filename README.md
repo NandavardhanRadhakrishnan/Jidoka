@@ -20,7 +20,6 @@ bun install
 claude                                     # once, to sign the CLI in
 export JIDOKA_AI_PROVIDER=agent-sdk
 export JIDOKA_AI_MODEL=sonnet              # optional
-export JIDOKA_SAMPLE_DIR=./samples
 bun run dev                                # http://localhost:3000
 ```
 
@@ -28,7 +27,6 @@ With an API key instead:
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...        # or JIDOKA_AI_PROVIDER=openai + OPENAI_API_KEY
-export JIDOKA_SAMPLE_DIR=./samples
 bun run dev
 ```
 
@@ -134,7 +132,6 @@ set in the environment.
 
 ## Feeding it tasks
 
-- **Sample folder** — drop a `.json`, `.txt` or `.md` file into `JIDOKA_SAMPLE_DIR`; see `samples/README.md`.
 - **By hand** — the board's **New task** button, or `POST /api/tasks` with `{ "title": ..., "body": ... }`.
 - **Extensions** — install a task-source extension (see the Extensions panel in the UI) for anything else, e.g. Outlook, GitHub.
 
@@ -161,7 +158,6 @@ applied live.
 | `JIDOKA_AI_MODEL` | `claude-opus-5` | Model id for the chosen provider |
 | `ANTHROPIC_AUTH_TOKEN` | — | OAuth bearer token, used when no API key is set |
 | `JIDOKA_AI_BASE_URL` | — | Gateway or proxy instead of the provider's own endpoint |
-| `JIDOKA_SAMPLE_DIR` | — | Folder polled by the sample source (e.g. `./samples`) |
 | `JIDOKA_EXTENSIONS_DIR` | `./extensions` | Folder scanned for extension manifests; always on, a missing/empty directory is a no-op |
 | `JIDOKA_TERMINAL` | — | Launcher for handoff commands, `{{command}}` substituted; unset means copy-only |
 | `JIDOKA_AGENT_RUNNER` | `in-process` | `in-process` (API key) or `agent-sdk` (Claude Code CLI, subscription) |

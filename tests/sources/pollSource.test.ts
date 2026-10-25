@@ -1,7 +1,7 @@
 import { test, expect, spyOn } from "bun:test";
 import { openDb, migrate } from "../../src/db";
 import { pollSource, retryFailure, rescanSource, type PollHooks } from "../../src/sources/poller";
-import { deleteTask, findTaskBySource, getTask, insertTask, listTasks } from "../../src/repo/tasks";
+import { deleteTask, findTaskBySource, getTask, insertTask, listTasks, updateTask } from "../../src/repo/tasks";
 import { dismissFailure, fileFailure, getItemRow } from "../../src/repo/sourceItems";
 import { getHorizon, nextWindow } from "../../src/repo/sourcePolls";
 import { listParticipants } from "../../src/repo/participants";
@@ -282,7 +282,57 @@ test("a task that predates the item record is joined, not duplicated", async () 
   expect(listTasks(db)).toHaveLength(1);
   expect(getItemRow(db, "fake", "a")!.taskId).toBe(existing.id);
   expect(created).toHaveLength(0);
-  expect(changed.map((c) => c.task.id)).toEqual([existing.id]);
+  expect(changed).toHaveLength(0);
+});
+
+test("adopting a pre-record task rebuilds it without onChanged; a later item in its thread fires onChanged", async () => {
+  const db = freshDb();
+  const existing = insertTask(db, { sourceId: "fake", externalId: "th", title: "Old", body: "old" });
+  updateTask(db, existing.id, { state: "done" });
+  const source = fakeSource([
+    {
+      items: [
+        item("a", { threadKey: "th", occurredAt: "2026-10-20T10:00:00.000Z", title: "Hi", body: "first" }),
+        item("b", { threadKey: "th", occurredAt: "2026-10-20T11:00:00.000Z", title: "Re: Hi", body: "second" }),
+      ],
+    },
+    { items: [item("c", { threadKey: "th", occurredAt: "2026-10-21T10:00:00.000Z", title: "Re: Hi", body: "third" })] },
+  ]);
+  const { created, changed, hooks } = recorder();
+
+  await pollSource(db, source, hooks);
+
+  expect(getItemRow(db, "fake", "a")!.taskId).toBe(existing.id);
+  expect(getItemRow(db, "fake", "b")!.taskId).toBe(existing.id);
+  const adopted = getTask(db, existing.id)!;
+  expect(adopted.state).toBe("done");
+  expect(adopted.title).toBe("Hi");
+  expect(adopted.body).toContain("first");
+  expect(adopted.body).toContain("second");
+  expect(adopted.body).not.toContain("old");
+  expect(created).toHaveLength(0);
+  expect(changed).toHaveLength(0);
+
+  await pollSource(db, source, hooks);
+
+  expect(getItemRow(db, "fake", "c")!.taskId).toBe(existing.id);
+  expect(listTasks(db)).toHaveLength(1);
+  expect(changed).toHaveLength(1);
+  expect(changed[0]!.task.id).toBe(existing.id);
+  expect(changed[0]!.items.map((i) => i.key)).toEqual(["c"]);
+});
+
+test("a reply threaded onto an unthreaded item's key is a change, not an adoption", async () => {
+  const db = freshDb();
+  const source = fakeSource([{ items: [item("a")] }, { items: [item("b", { threadKey: "a" })] }]);
+  const { created, changed, hooks } = recorder();
+
+  await pollSource(db, source, hooks);
+  await pollSource(db, source, hooks);
+
+  expect(listTasks(db)).toHaveLength(1);
+  expect(created).toHaveLength(1);
+  expect(changed.map((c) => c.items.map((i) => i.key))).toEqual([["b"]]);
 });
 
 // ── Failures ─────────────────────────────────────────────────────────────────

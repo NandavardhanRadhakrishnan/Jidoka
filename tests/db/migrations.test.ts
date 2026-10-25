@@ -56,3 +56,14 @@ test("source item, poll log and horizon tables and indexes exist and migrate() r
     expect(names).toContain(name);
   }
 });
+
+test("migrate drops the cursor and merged-item tables of the old polling contract", () => {
+  const db = openDb(":memory:");
+  migrate(db);
+  migrate(db);
+  const names = (db.query("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[]).map(
+    (r) => r.name,
+  );
+  expect(names).not.toContain("source_state");
+  expect(names).not.toContain("merged_source_items");
+});

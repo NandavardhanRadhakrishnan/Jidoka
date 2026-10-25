@@ -60,6 +60,7 @@ Jidoka has no first-run flow. "Onboarding" in the code means *type* onboarding; 
 - **Your org.** The user names their org and adds its email domains. The roster creates a home org ("My org") at startup as a fallback, and setup should fill it in rather than create a second org. The home-org flag never moves: it is the future multiplayer workspace.
 - **Who you are.** The user sets their display name on the "Me" person and confirms its identities (`email:…`, `github:…`). Identities resolved from connected extensions (`getIdentity`) are added to "Me" automatically; setup shows them and lets the user add any that no extension reports.
 - **Domain suggestion.** When "Me" has an email identity on a non-public domain, offer to add that domain to the home org, one click and never automatic.
+- **Sample data.** A sample-data extension replaces the removed sample-folder source, so a fresh install has tasks to try without credentials (the `samples/` folder holds its data).
 
 Source: the roster brainstorm (spec to follow under `docs/superpowers/specs/`).
 
@@ -83,7 +84,6 @@ Source: the roster brainstorm (spec to follow under `docs/superpowers/specs/`).
 ## Extension system
 
 - **`config` has no storage.** The manifest schema validates `config`, but nothing persists per-install values. Needed by item 1's ledger source.
-- **Poll failures are console-only.** No `lastError` in the UI, repeated identical log lines for a permanently broken extension, and no per-poll timeout (`test-poll` has none either).
 - **Authors can't import Jidoka's types.** `ExtensionSourceDeps` is exported from `src/sources/types.ts`, but a third-party `source.ts` can't import it; needs a type entry point plus docs for the `createSource` / `getIdentity` contract.
 - **No pruning.** Deleting an extension folder by hand leaves its DB row behind.
 - **`expectedMcpServer` matching** against configured MCP servers is unbuilt; installing an MCP server from inside Jidoka is a separate quality-of-life item.

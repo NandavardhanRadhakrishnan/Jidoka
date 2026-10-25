@@ -20,7 +20,6 @@ export interface EffectiveSettings {
   ai: { provider: string; apiKeyConfigured: boolean; model?: string; baseUrl?: string };
   agent: { runner: string; model?: string; concurrency: number; maxBudgetUsd?: number };
   mcpServers: { name: string; command: string; args: string[] }[];
-  sampleDir?: string;
   extensionsDir: string;
   pollIntervalMs: number;
   terminalCommand?: string;
@@ -31,7 +30,6 @@ export interface SettingsPatch {
   ai?: { provider?: string; apiKey?: string; model?: string; baseUrl?: string };
   agent?: { runner?: string; model?: string; concurrency?: number; maxBudgetUsd?: number };
   mcpServers?: { name: string; command: string; args: string[] }[];
-  sampleDir?: string;
   extensionsDir?: string;
   pollIntervalMs?: number;
   terminalCommand?: string;

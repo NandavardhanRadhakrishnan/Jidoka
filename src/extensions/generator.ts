@@ -41,7 +41,7 @@ export function createSource(deps) {
       const failures = [];
       // Fetch every item that changed at or after since (everything when since is null).
       // For each record the API returns:
-      //   if it can't be built (no readable id, a missing field): failures.push({ key, error }) and move on
+      //   if it can't be built (a missing field, an unreadable id): \`failures.push({ key, error })\`, or \`failures.push({ error })\` when there is no readable id — never a made-up key — and move on
       //   otherwise: items.push({ key, threadKey, occurredAt, title, body, url, participants })
       return { items, failures };
     },
@@ -64,7 +64,7 @@ source.ts rules:
 - "deps.getToken()" returns a Promise<string> — the current valid token or API key. Call it inside list(), never store it.
 - "list({ since })" receives "since", an ISO-8601 timestamp string or null, and must return { items: SourceItem[], failures: { key?: string, error: string }[] }.
 - Each SourceItem is { key: string, threadKey?: string, version?: string, occurredAt: string, title: string, body: string, url?: string, metadata?: Record<string, unknown>, participants?: { identity: string, name?: string, role: "from" | "to" | "cc" | "author" | "assignee" | "commenter" }[] }:
-  - "key": the item's own immutable id, taken from the item itself (a Message-ID, a Gmail message id, an issue comment id). At most 512 characters.
+  - "key": the item's own immutable id, taken from the item itself (a Message-ID, a Gmail message id, an issue comment id). At most 512 characters. Keys must be unique within the source: prefix with the repo or kind when ids can repeat (e.g. \`owner/repo#12\`).
   - "threadKey": items with the same threadKey become one task (an email conversation, an issue and its comments). Omit it and the item is a task on its own.
   - "version": changes when the item's content changes (an updated_at, an etag). Omit it for items that never change, like an email.
   - "occurredAt": when the item happened, ISO-8601. It orders the items within a thread.
@@ -87,6 +87,7 @@ source.ts rules:
 - never use IMAP UIDs or mailbox positions as keys. They change when mail moves or a mailbox is rebuilt, and the same email would come back as a new task.
 - never invent a fallback key. When an item's id can't be read, don't build one from other fields; report the item in "failures".
 - Report items you couldn't build in "failures", never drop them: { key, error } when you know the key, { error } alone when you don't. Jidoka shows every failure to the user, who can retry it once the extension is fixed.
+- One item, one key: return each key once per call, even when the API's pages overlap or the same record shows up twice.
 - Keep no cursor; filter by "since". Hold no state across calls and do no paging between calls — list() may run in a fresh process. Page through the API inside one call if you need to, and return the whole window.
 - When the target system has an obvious "who am I" endpoint reachable with the same credential (GitHub's GET /user, Microsoft Graph's GET /me, Slack's auth.test), also export \`async function getIdentity(deps)\` — same deps — returning the connected user's identity on that system, namespaced the same way as participants ("github:octocat", "email:you@example.com"). Jidoka uses it to recognise the user's own activity, so their own comments never come back to them as new work. If there is no such endpoint, omit it.`;
 

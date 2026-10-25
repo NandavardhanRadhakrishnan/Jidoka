@@ -12,10 +12,10 @@ test("applySettings overrides a field the settings actually set", () => {
 test("applySettings falls through to the base value when settings omit a field", () => {
   const base = loadConfig({ JIDOKA_AI_MODEL: "claude-haiku-4-5-20251001" });
 
-  const merged = applySettings(base, { sampleDir: "./samples" });
+  const merged = applySettings(base, { pollIntervalMs: 30000 });
 
   expect(merged.ai.model).toBe("claude-haiku-4-5-20251001");
-  expect(merged.sampleDir).toBe("./samples");
+  expect(merged.pollIntervalMs).toBe(30000);
 });
 
 test("applySettings merges ai/agent one level deep rather than replacing the whole section", () => {

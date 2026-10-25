@@ -35,10 +35,6 @@ export const MIGRATIONS: string[] = [
      UNIQUE (type_id, version)
    )`,
   `DROP TABLE IF EXISTS pipelines`,
-  `CREATE TABLE IF NOT EXISTS source_state (
-     source_id TEXT PRIMARY KEY,
-     cursor TEXT
-   )`,
   `CREATE TABLE IF NOT EXISTS oauth_tokens (
      provider TEXT PRIMARY KEY,
      access_token TEXT NOT NULL,
@@ -71,12 +67,6 @@ export const MIGRATIONS: string[] = [
    )`,
   `ALTER TABLE tasks ADD COLUMN deadline TEXT`,
   `ALTER TABLE tasks ADD COLUMN dedup_candidate_id TEXT`,
-  `CREATE TABLE IF NOT EXISTS merged_source_items (
-     source_id TEXT NOT NULL,
-     external_id TEXT NOT NULL,
-     merged_at TEXT NOT NULL,
-     PRIMARY KEY (source_id, external_id)
-   )`,
   `CREATE TABLE IF NOT EXISTS hints (
      id TEXT PRIMARY KEY,
      rule_id TEXT NOT NULL,
@@ -182,4 +172,7 @@ export const MIGRATIONS: string[] = [
      source_id TEXT PRIMARY KEY,
      horizon TEXT NOT NULL
    )`,
+  // The cursor contract's tables, replaced by source_items / source_polls.
+  `DROP TABLE IF EXISTS source_state`,
+  `DROP TABLE IF EXISTS merged_source_items`,
 ];

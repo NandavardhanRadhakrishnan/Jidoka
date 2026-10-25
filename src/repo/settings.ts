@@ -17,7 +17,6 @@ export function saveSettings(db: Database, patch: Settings): Settings {
     ai: mergeSection(current.ai, patch.ai),
     agent: mergeSection(current.agent, patch.agent),
     mcpServers: patch.mcpServers ?? current.mcpServers,
-    sampleDir: patch.sampleDir ?? current.sampleDir,
     extensionsDir: patch.extensionsDir ?? current.extensionsDir,
     pollIntervalMs: patch.pollIntervalMs ?? current.pollIntervalMs,
     terminalCommand: patch.terminalCommand ?? current.terminalCommand,

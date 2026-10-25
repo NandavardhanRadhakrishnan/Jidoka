@@ -15,9 +15,9 @@ test("getSettings on an empty db returns {}", () => {
 
 test("saveSettings persists and round-trips", () => {
   const db = freshDb();
-  const saved = saveSettings(db, { sampleDir: "./samples", ai: { model: "claude-sonnet-5" } });
+  const saved = saveSettings(db, { pollIntervalMs: 30000, ai: { model: "claude-sonnet-5" } });
 
-  expect(saved).toEqual({ sampleDir: "./samples", ai: { model: "claude-sonnet-5" } });
+  expect(saved).toEqual({ pollIntervalMs: 30000, ai: { model: "claude-sonnet-5" } });
   expect(getSettings(db)).toEqual(saved);
 });
 
@@ -41,11 +41,11 @@ test("saveSettings replaces whole-value fields like mcpServers rather than mergi
 
 test("saveSettings leaves a section untouched when the patch omits it", () => {
   const db = freshDb();
-  saveSettings(db, { ai: { model: "claude-sonnet-5" }, sampleDir: "./samples" });
+  saveSettings(db, { ai: { model: "claude-sonnet-5" }, pollIntervalMs: 30000 });
 
   const updated = saveSettings(db, { extensionsDir: "./extensions" });
 
   expect(updated.ai).toEqual({ model: "claude-sonnet-5" });
-  expect(updated.sampleDir).toBe("./samples");
+  expect(updated.pollIntervalMs).toBe(30000);
   expect(updated.extensionsDir).toBe("./extensions");
 });

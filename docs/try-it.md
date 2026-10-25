@@ -10,7 +10,6 @@ gets you the same requests.
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...     # or JIDOKA_AI_PROVIDER=openai + OPENAI_API_KEY
-export JIDOKA_SAMPLE_DIR=./samples      # optional: also ingests the files in samples/
 bun run dev                             # http://localhost:3000
 ```
 

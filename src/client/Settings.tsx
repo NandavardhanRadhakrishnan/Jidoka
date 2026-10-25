@@ -32,7 +32,6 @@ export function Settings() {
   const [agentConcurrency, setAgentConcurrency] = useState(1);
   const [agentMaxBudget, setAgentMaxBudget] = useState("");
   const [mcpRows, setMcpRows] = useState<McpServerRow[]>([]);
-  const [sampleDir, setSampleDir] = useState("");
   const [extensionsDir, setExtensionsDir] = useState("");
   const [pollIntervalMs, setPollIntervalMs] = useState(60000);
   const [terminalCommand, setTerminalCommand] = useState("");
@@ -54,7 +53,6 @@ export function Settings() {
       setAgentConcurrency(effective.agent.concurrency);
       setAgentMaxBudget(effective.agent.maxBudgetUsd?.toString() ?? "");
       setMcpRows(toRows(effective.mcpServers));
-      setSampleDir(effective.sampleDir ?? "");
       setExtensionsDir(effective.extensionsDir);
       setPollIntervalMs(effective.pollIntervalMs);
       setTerminalCommand(effective.terminalCommand ?? "");
@@ -87,7 +85,6 @@ export function Settings() {
           ...(agentMaxBudget.trim() ? { maxBudgetUsd: Number(agentMaxBudget) } : {}),
         },
         mcpServers: fromRows(mcpRows),
-        ...(sampleDir.trim() ? { sampleDir: sampleDir.trim() } : {}),
         extensionsDir: extensionsDir.trim(),
         pollIntervalMs,
         ...(terminalCommand.trim() ? { terminalCommand: terminalCommand.trim() } : {}),
@@ -232,10 +229,6 @@ export function Settings() {
       <section>
         <h6>Ingestion</h6>
         <div className="settings-grid">
-          <div className="field">
-            <label>Sample folder</label>
-            <input className="input mono" value={sampleDir} onChange={(e) => setSampleDir(e.target.value)} />
-          </div>
           <div className="field">
             <label>Poll interval (ms)</label>
             <input className="input mono" type="number" min={1000} value={pollIntervalMs} onChange={(e) => setPollIntervalMs(Number(e.target.value))} />

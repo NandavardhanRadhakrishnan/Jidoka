@@ -45,9 +45,6 @@ export interface NewTask {
   title: string;
   body: string;
   metadata?: Record<string, unknown>;
-  /** Stamped into context.revision at creation, so a later reopen has
-   *  something to compare the source's next revision against. */
-  revision?: string;
 }
 
 export interface TaskPatch {

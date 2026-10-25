@@ -45,7 +45,6 @@ const INTERNAL_KEYS = new Set([
   "mergedFrom",
   "dedupRationale",
   "thread",
-  "revision",
   "isFollowUp",
   "urgency",
   "priorityOverride",

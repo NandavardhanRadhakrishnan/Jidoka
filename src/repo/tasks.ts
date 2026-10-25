@@ -49,7 +49,6 @@ function toTask(row: Row): Task {
 export function insertTask(db: Database, input: NewTask): Task {
   const now = new Date().toISOString();
   const id = crypto.randomUUID();
-  const context = input.revision ? { revision: input.revision } : {};
   db.query(
     `INSERT INTO tasks (id, source_id, external_id, url, title, body, metadata,
                         type_id, type_candidates, state, assignee, context, created_at, updated_at)
@@ -62,7 +61,7 @@ export function insertTask(db: Database, input: NewTask): Task {
     input.title,
     input.body,
     JSON.stringify(input.metadata ?? {}),
-    JSON.stringify(context),
+    "{}",
     now,
     now,
   );

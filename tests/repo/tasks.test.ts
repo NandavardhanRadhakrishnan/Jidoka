@@ -63,21 +63,6 @@ test("updateTask patches a dedup candidate id", () => {
   expect(getTask(db, task.id)?.dedupCandidateId).toBe(other.id);
 });
 
-test("insertTask stamps context.revision when the input carries one", () => {
-  const db = freshDb();
-  const task = insertTask(db, { ...sample, revision: "rev-1" });
-
-  expect(task.context.revision).toBe("rev-1");
-  expect(getTask(db, task.id)?.context.revision).toBe("rev-1");
-});
-
-test("insertTask leaves context empty when no revision is given", () => {
-  const db = freshDb();
-  const task = insertTask(db, sample);
-
-  expect(task.context).toEqual({});
-});
-
 test("insertTask defaults dedupCandidateId to null", () => {
   const db = freshDb();
   const task = insertTask(db, sample);

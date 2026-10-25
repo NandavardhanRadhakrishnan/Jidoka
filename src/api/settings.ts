@@ -25,7 +25,6 @@ interface EffectiveSettings {
     maxBudgetUsd?: number;
   };
   mcpServers: Config["mcpServers"];
-  sampleDir?: string;
   extensionsDir: string;
   pollIntervalMs: number;
   terminalCommand?: string;
@@ -52,7 +51,6 @@ function effectiveOf(config: Config): EffectiveSettings {
       maxBudgetUsd: config.agent.maxBudgetUsd,
     },
     mcpServers: config.mcpServers,
-    sampleDir: config.sampleDir,
     extensionsDir: config.extensionsDir,
     pollIntervalMs: config.pollIntervalMs,
     terminalCommand: config.terminalCommand,

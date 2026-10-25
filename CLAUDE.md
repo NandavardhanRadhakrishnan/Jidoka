@@ -16,7 +16,7 @@ bun run typecheck                                    # tsc --noEmit, must stay c
 bun run build                                        # single executable: ./jidoka(.exe)
 ```
 
-Run with `JIDOKA_SAMPLE_DIR=./samples` to get tasks without any credentials; `README.md` lists every environment variable.
+Add a task from the board or install an extension to get tasks; `README.md` lists every environment variable.
 
 ## Code map
 
@@ -24,7 +24,7 @@ Run with `JIDOKA_SAMPLE_DIR=./samples` to get tasks without any credentials; `RE
 - `src/domain/` — `Task`, `TaskType`, and the Zod `RuleDefinitionSchema` (steps: `ai`, `agent`, `mcp_tool`, `branch`, `assign`, `call_rule`).
 - `src/repo/` — all SQL lives here, one module per table.
 - `src/ai/` — the **only** place vendor SDKs may be imported. Everything else depends on the `AiProvider` interface.
-- `src/sources/` — ingestion only: the `TaskSource` interface, the poller, and the sample folder source. No other built-in sources live here — everything else is a third-party extension under `extensions/`.
+- `src/sources/` — ingestion only: the `TaskSource` interface and the poller. No built-in sources live here — every source is a third-party extension under `extensions/`.
 - `src/mcp/` — MCP client; read and write against external systems goes here, never into a source.
 - `src/rule/` — `executor.ts` runs a definition, `builder.ts` is the agent that writes one.
 - `src/agent/` — the `agent` step's tool loop behind one `AgentRunner` interface: `runner.ts` (in-process, API key), `claudeAgentSdk.ts` (Claude Code CLI via the Agent SDK, subscription auth), `limit.ts` (concurrency cap). The step's tool allowlist is enforced in Jidoka's code in both backends.

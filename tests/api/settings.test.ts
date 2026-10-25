@@ -31,22 +31,22 @@ test("PATCH /api/settings persists and a later GET reflects it", async () => {
     new Request("http://localhost/api/settings", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ sampleDir: "./samples", ai: { model: "claude-sonnet-5" } }),
+      body: JSON.stringify({ pollIntervalMs: 30000, ai: { model: "claude-sonnet-5" } }),
     }),
   );
   const patched = (await patchResponse.json()) as {
-    effective: { sampleDir?: string; ai: { model?: string } };
+    effective: { pollIntervalMs?: number; ai: { model?: string } };
   };
-  expect(patched.effective.sampleDir).toBe("./samples");
+  expect(patched.effective.pollIntervalMs).toBe(30000);
   expect(patched.effective.ai.model).toBe("claude-sonnet-5");
 
   const getResponse = await fetch(new Request("http://localhost/api/settings"));
   const body = (await getResponse.json()) as {
-    settings: { sampleDir?: string };
-    effective: { sampleDir?: string };
+    settings: { pollIntervalMs?: number };
+    effective: { pollIntervalMs?: number };
   };
-  expect(body.settings.sampleDir).toBe("./samples");
-  expect(body.effective.sampleDir).toBe("./samples");
+  expect(body.settings.pollIntervalMs).toBe(30000);
+  expect(body.effective.pollIntervalMs).toBe(30000);
 });
 
 test("an api key is never echoed back as plaintext, only as apiKeyConfigured", async () => {
