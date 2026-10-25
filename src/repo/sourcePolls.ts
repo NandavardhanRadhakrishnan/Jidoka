@@ -145,3 +145,9 @@ export function nextWindow(db: Database, sourceId: string, now: Date): { since: 
   if (!row) return { since: horizon, isFirst: false };
   return { since: new Date(new Date(row.started_at).getTime() - OVERLAP_MS).toISOString(), isFirst: false };
 }
+
+/** Drops a source poll history and horizon (used when its extension is deleted). */
+export function deleteSourceHistory(db: Database, sourceId: string): void {
+  db.query("DELETE FROM source_polls WHERE source_id = ?").run(sourceId);
+  db.query("DELETE FROM source_horizons WHERE source_id = ?").run(sourceId);
+}

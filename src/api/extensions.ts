@@ -4,7 +4,11 @@ import { mkdtemp, mkdir, copyFile, rm, stat, writeFile, readFile } from "node:fs
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as extensionsRepo from "../repo/extensions";
-import { removeCursor } from "../repo/sourceState";
+import { countFailures, deleteSourceItems, dismissFailure, getItemRow, listFailures } from "../repo/sourceItems";
+import { deleteSourceHistory, lastPoll, listPolls } from "../repo/sourcePolls";
+import { checkList } from "../sources/checks";
+import { rescanSource, retryFailure, type PollHooks } from "../sources/poller";
+import type { TaskSource } from "../sources/types";
 import { discoverExtensions } from "../extensions/discovery";
 import { loadOneExtensionSource, resolveIdentity } from "../extensions/runtime";
 import { addSelfIdentity } from "../repo/roster";
@@ -20,6 +24,8 @@ export interface ExtensionRoutesDeps {
   extensionsDir: string;
   runAgent: AgentRunner;
   listTools: () => ToolSpec[];
+  /** The same ingestion hooks the background poller uses. */
+  pollHooks: PollHooks;
 }
 
 function escapeHtml(value: string): string {
@@ -93,6 +99,8 @@ export function createExtensionRoutes(deps: ExtensionRoutesDeps): Hono {
       valid: record.valid,
       error: record.error,
       status: deps.vault.status(record.id),
+      lastPoll: lastPoll(deps.db, record.id),
+      failedCount: countFailures(deps.db, record.id),
     }));
   }
 
@@ -301,16 +309,81 @@ export function createExtensionRoutes(deps: ExtensionRoutesDeps): Hono {
     return c.json({ enabled: false });
   });
 
-  app.post("/api/extensions/:id/test-poll", async (c) => {
-    const id = c.req.param("id");
-    if (!extensionsRepo.get(deps.db, id)) return c.json({ error: "unknown extension" }, 404);
+  /** 404 for an unknown extension, 400 when it is not connected. */
+  function guard(id: string): { error: string; status: 404 | 400 } | null {
+    if (!extensionsRepo.get(deps.db, id)) return { error: "unknown extension", status: 404 };
     if (deps.vault.status(id) !== "connected") {
-      return c.json({ error: `extension "${id}" is not connected` }, 400);
+      return { error: `extension "${id}" is not connected`, status: 400 };
+    }
+    return null;
+  }
+
+  async function loadSource(id: string): Promise<TaskSource> {
+    return loadOneExtensionSource(deps.db, deps.extensionsDir, deps.vault, id);
+  }
+
+  app.get("/api/extensions/:id/polls", (c) => {
+    const id = c.req.param("id");
+    const denied = guard(id);
+    if (denied) return c.json({ error: denied.error }, denied.status);
+    return c.json({ polls: listPolls(deps.db, id) });
+  });
+
+  app.get("/api/extensions/:id/failures", (c) => {
+    const id = c.req.param("id");
+    const denied = guard(id);
+    if (denied) return c.json({ error: denied.error }, denied.status);
+    return c.json({ failures: listFailures(deps.db, id) });
+  });
+
+  app.post("/api/extensions/:id/failures/:key/retry", async (c) => {
+    const id = c.req.param("id");
+    const key = c.req.param("key");
+    const denied = guard(id);
+    if (denied) return c.json({ error: denied.error }, denied.status);
+    if (getItemRow(deps.db, id, key)?.status !== "failed") {
+      return c.json({ error: "no failed item with that key" }, 404);
     }
     try {
-      const source = await loadOneExtensionSource(deps.db, deps.extensionsDir, deps.vault, id);
+      const source = await loadSource(id);
+      const { poll } = await retryFailure(deps.db, source, key, deps.pollHooks);
+      return c.json({ poll });
+    } catch (error) {
+      return c.json({ error: errorMessage(error) }, 400);
+    }
+  });
+
+  app.post("/api/extensions/:id/failures/:key/dismiss", (c) => {
+    const id = c.req.param("id");
+    const denied = guard(id);
+    if (denied) return c.json({ error: denied.error }, denied.status);
+    dismissFailure(deps.db, id, c.req.param("key"));
+    return c.json({ dismissed: true });
+  });
+
+  app.post("/api/extensions/:id/rescan", async (c) => {
+    const id = c.req.param("id");
+    const denied = guard(id);
+    if (denied) return c.json({ error: denied.error }, denied.status);
+    try {
+      const source = await loadSource(id);
+      const { poll, recovered } = await rescanSource(deps.db, source, deps.pollHooks);
+      return c.json({ recovered, poll });
+    } catch (error) {
+      return c.json({ error: errorMessage(error) }, 400);
+    }
+  });
+
+  // Preview only: runs list() and the item checks, writes nothing.
+  app.post("/api/extensions/:id/test-poll", async (c) => {
+    const id = c.req.param("id");
+    const denied = guard(id);
+    if (denied) return c.json({ error: denied.error }, denied.status);
+    try {
+      const source = await loadSource(id);
       const result = await source.list({ since: null });
-      return c.json({ itemCount: result.items.length, sample: result.items.slice(0, 3) });
+      const { valid, failures: checkFailures } = checkList(result.items);
+      return c.json({ items: valid, failures: result.failures ?? [], checkFailures });
     } catch (error) {
       return c.json({ error: errorMessage(error) }, 400);
     }
@@ -321,7 +394,8 @@ export function createExtensionRoutes(deps: ExtensionRoutesDeps): Hono {
     if (!extensionsRepo.get(deps.db, id)) return c.json({ error: "unknown extension" }, 404);
     deps.vault.disconnect(id);
     extensionsRepo.remove(deps.db, id);
-    removeCursor(deps.db, id);
+    deleteSourceItems(deps.db, id);
+    deleteSourceHistory(deps.db, id);
     await rm(join(deps.extensionsDir, id), { recursive: true, force: true });
     return c.json({ deleted: true });
   });

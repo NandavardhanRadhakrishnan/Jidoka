@@ -17,7 +17,7 @@ import { createInProcessRunner, type AgentRunner } from "./agent/runner";
 import { createAgentSdkRunner } from "./agent/claudeAgentSdk";
 import { withConcurrencyLimit } from "./agent/limit";
 import { onTaskIngested, onTaskChanged, type AppDeps } from "./orchestrator";
-import { startPoller } from "./sources/poller";
+import { startPoller, type PollHooks } from "./sources/poller";
 import { createSampleFolderSource } from "./sources/sample/folder";
 import type { LegacyTaskSource, TaskSource } from "./sources/types";
 import { loadEnabledExtensionSources } from "./extensions/runtime";
@@ -44,6 +44,26 @@ function legacyAsListSource(legacy: LegacyTaskSource): TaskSource {
         })),
         failures: [],
       };
+    },
+  };
+}
+
+/** The ingestion hooks shared by the background poller and the extension routes. */
+function makePollHooks(deps: AppDeps): PollHooks {
+  return {
+    async onCreated(task) {
+      try {
+        await onTaskIngested(deps, task);
+      } catch (error) {
+        console.error(`[orchestrator] task ${task.id} failed:`, error);
+      }
+    },
+    async onChanged(task, newItems) {
+      try {
+        await onTaskChanged(deps, task, newItems);
+      } catch (error) {
+        console.error(`[orchestrator] reopen for task ${task.id} failed:`, error);
+      }
     },
   };
 }
@@ -120,6 +140,7 @@ export function createApp(baseConfig: Config): App {
       extensionsDir: config.extensionsDir,
       runAgent,
       listTools: () => mcp.listTools(),
+      pollHooks: makePollHooks(deps),
     }),
   );
   extraRoutes.route("/", createSettingsRoutes({ db, baseConfig }));
@@ -192,22 +213,7 @@ if (import.meta.main) {
   startPoller(
     app.deps.db,
     sources,
-    {
-      async onCreated(task) {
-        try {
-          await onTaskIngested(app.deps, task);
-        } catch (error) {
-          console.error(`[orchestrator] task ${task.id} failed:`, error);
-        }
-      },
-      async onChanged(task, newItems) {
-        try {
-          await onTaskChanged(app.deps, task, newItems);
-        } catch (error) {
-          console.error(`[orchestrator] reopen for task ${task.id} failed:`, error);
-        }
-      },
-    },
+    makePollHooks(app.deps),
     app.config.pollIntervalMs,
     () => loadEnabledExtensionSources(app.deps.db, app.config.extensionsDir, app.vault),
   );

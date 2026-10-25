@@ -190,3 +190,7 @@ export function rowForTaskKey(db: Database, taskId: string, key: string): Source
 export function repointTask(db: Database, fromTaskId: string, toTaskId: string): void {
   db.query("UPDATE source_items SET task_id = ? WHERE task_id = ?").run(toTaskId, fromTaskId);
 }
+
+export function deleteSourceItems(db: Database, sourceId: string): void {
+  db.query("DELETE FROM source_items WHERE source_id = ?").run(sourceId);
+}

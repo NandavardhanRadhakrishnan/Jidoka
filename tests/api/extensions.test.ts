@@ -8,7 +8,9 @@ import { discoverExtensions } from "../../src/extensions/discovery";
 import { createExtensionRoutes } from "../../src/api/extensions";
 import type { HttpFetch } from "../../src/vault/deviceCode";
 import type { AgentRunner } from "../../src/agent/runner";
-import { getCursor, setCursor } from "../../src/repo/sourceState";
+import { pollSource, type PollHooks } from "../../src/sources/poller";
+import { loadOneExtensionSource } from "../../src/extensions/runtime";
+import { getItemRow } from "../../src/repo/sourceItems";
 import { listTasks } from "../../src/repo/tasks";
 import { getResolvedIdentity, setResolvedIdentity } from "../../src/repo/extensions";
 import { addIdentity, createPerson, ensureRosterDefaults, getPerson, getSelf } from "../../src/repo/roster";
@@ -21,6 +23,10 @@ async function writeManifest(dir: string, id: string, manifest: unknown): Promis
   const folder = join(dir, id);
   await mkdir(folder, { recursive: true });
   await writeFile(join(folder, "manifest.json"), JSON.stringify(manifest));
+}
+
+function recordingHooks(): PollHooks {
+  return { async onCreated() {}, async onChanged() {} };
 }
 
 async function setup(
@@ -49,6 +55,7 @@ async function setup(
     extensionsDir: dir,
     runAgent,
     listTools: options.listTools ?? (() => []),
+    pollHooks: recordingHooks(),
   });
   return { db, dir, vault, fetch: async (req: Request) => app.fetch(req) };
 }
@@ -136,6 +143,7 @@ test("rescan returns a 500 with a JSON error when extensionsDir is not a directo
       },
     },
     listTools: () => [],
+    pollHooks: recordingHooks(),
   });
 
   const response = await app.fetch(
@@ -625,12 +633,130 @@ test("test-poll runs list({ since: null }) for real without creating tasks or st
     new Request("http://localhost/api/extensions/notion/test-poll", { method: "POST" }),
   );
   expect(response.status).toBe(200);
-  const body = (await response.json()) as { itemCount: number; sample: { title: string }[] };
-  expect(body.itemCount).toBe(1);
-  expect(body.sample[0]?.title).toBe("via secret since null");
+  const body = (await response.json()) as { items: { title: string }[] };
+  expect(body.items).toHaveLength(1);
+  expect(body.items[0]?.title).toBe("via secret since null");
 
-  expect(getCursor(db, "notion")).toBeNull();
   expect(listTasks(db)).toEqual([]);
+  expect(db.query("SELECT COUNT(*) AS n FROM source_items").get()).toEqual({ n: 0 });
+  expect(db.query("SELECT COUNT(*) AS n FROM source_polls").get()).toEqual({ n: 0 });
+});
+
+const KEYED_FAIL = "<fail@x.example>";
+const BAD_TITLE = "<bad-title@x.example>";
+const GOOD = "<good@x.example>";
+
+const pollingSource = `export function createSource(deps) {
+  return {
+    async list({ since }) {
+      globalThis.__lists = (globalThis.__lists ?? []).concat([since]);
+      return {
+        items: [
+          { key: ${JSON.stringify(GOOD)}, occurredAt: "2026-10-20T10:00:00.000Z", title: "good", body: "b" },
+          { key: ${JSON.stringify(BAD_TITLE)}, occurredAt: "2026-10-20T11:00:00.000Z", title: "  ", body: "b" },
+        ],
+        failures: [{ key: ${JSON.stringify(KEYED_FAIL)}, error: "could not parse" }],
+      };
+    },
+  };
+}`;
+
+async function pollingSetup() {
+  const ctx = await setup();
+  await writeManifest(ctx.dir, "notion", apiKeyManifest);
+  await writeFile(join(ctx.dir, "notion", "source.ts"), pollingSource);
+  await discoverExtensions(ctx.db, ctx.dir);
+  ctx.vault.saveApiKey("notion", "k");
+  const source = await loadOneExtensionSource(ctx.db, ctx.dir, ctx.vault, "notion");
+  await pollSource(ctx.db, source, recordingHooks());
+  return ctx;
+}
+
+const post = (path: string) => new Request(`http://localhost/api/extensions/notion/${path}`, { method: "POST" });
+
+test("test-poll previews items, source failures and check failures, writing nothing", async () => {
+  const { fetch, dir, db, vault } = await setup();
+  await writeManifest(dir, "notion", apiKeyManifest);
+  await writeFile(join(dir, "notion", "source.ts"), pollingSource);
+  await discoverExtensions(db, dir);
+  vault.saveApiKey("notion", "k");
+
+  const response = await fetch(post("test-poll"));
+  expect(response.status).toBe(200);
+  const body = (await response.json()) as { items: unknown[]; failures: unknown[]; checkFailures: unknown[] };
+  expect(body.items).toHaveLength(1);
+  expect(body.failures).toHaveLength(1);
+  expect(body.checkFailures).toHaveLength(1);
+  expect(listTasks(db)).toEqual([]);
+  expect(db.query("SELECT COUNT(*) AS n FROM source_items").get()).toEqual({ n: 0 });
+});
+
+test("polls, failures, dismiss, retry, rescan and delete", async () => {
+  const { fetch, db } = await pollingSetup();
+  (globalThis as { __lists?: unknown[] }).__lists = undefined;
+
+  const polls = (await (await fetch(new Request("http://localhost/api/extensions/notion/polls"))).json()) as {
+    polls: { outcome: string }[];
+  };
+  expect(polls.polls).toHaveLength(1);
+  expect(polls.polls[0]?.outcome).toBe("ok");
+
+  const failures = async () =>
+    (
+      (await (await fetch(new Request("http://localhost/api/extensions/notion/failures"))).json()) as {
+        failures: { key: string; failedWindow: string | null }[];
+      }
+    ).failures;
+  expect(await failures()).toHaveLength(2);
+
+  const listed = (await (await fetch(new Request("http://localhost/api/extensions"))).json()) as {
+    extensions: { failedCount: number; lastPoll: { kind: string } | null }[];
+  };
+  expect(listed.extensions[0]?.failedCount).toBe(2);
+  expect(listed.extensions[0]?.lastPoll?.kind).toBe("poll");
+
+  const dismissed = await fetch(post(`failures/${encodeURIComponent(BAD_TITLE)}/dismiss`));
+  expect(await dismissed.json()).toEqual({ dismissed: true });
+  const remaining = await failures();
+  expect(remaining).toHaveLength(1);
+  expect(remaining[0]?.key).toBe(KEYED_FAIL);
+
+  const window = remaining[0]?.failedWindow;
+  const retry = await fetch(post(`failures/${encodeURIComponent(KEYED_FAIL)}/retry`));
+  expect(retry.status).toBe(200);
+  const retried = (await retry.json()) as { poll: { kind: string } };
+  expect(retried.poll.kind).toBe("retry");
+  expect((globalThis as { __lists?: unknown[] }).__lists).toEqual([window]);
+
+  const rescan = await fetch(post("rescan"));
+  expect(rescan.status).toBe(200);
+  const rescanned = (await rescan.json()) as { recovered: number; poll: { kind: string } };
+  expect(rescanned.recovered).toBe(0);
+  expect(rescanned.poll.kind).toBe("rescan");
+
+  expect(getItemRow(db, "notion", GOOD)).not.toBeNull();
+  const del = await fetch(post("delete"));
+  expect(await del.json()).toEqual({ deleted: true });
+  for (const table of ["source_items", "source_polls", "source_horizons"]) {
+    expect(db.query(`SELECT COUNT(*) AS n FROM ${table} WHERE source_id = 'notion'`).get()).toEqual({ n: 0 });
+  }
+});
+
+test("retry on an unknown or dismissed key is a 404", async () => {
+  const { fetch } = await pollingSetup();
+  expect((await fetch(post(`failures/${encodeURIComponent("<nope@x>")}/retry`))).status).toBe(404);
+  await fetch(post(`failures/${encodeURIComponent(BAD_TITLE)}/dismiss`));
+  expect((await fetch(post(`failures/${encodeURIComponent(BAD_TITLE)}/retry`))).status).toBe(404);
+});
+
+test("polling routes: unknown extension is 404, not connected is 400", async () => {
+  const { fetch, dir, db } = await setup();
+  expect((await fetch(new Request("http://localhost/api/extensions/ghost/polls"))).status).toBe(404);
+  expect((await fetch(new Request("http://localhost/api/extensions/ghost/failures"))).status).toBe(404);
+  await writeManifest(dir, "notion", apiKeyManifest);
+  await discoverExtensions(db, dir);
+  expect((await fetch(post("rescan"))).status).toBe(400);
+  expect((await fetch(post("failures/k/retry"))).status).toBe(400);
 });
 
 test("test-poll surfaces a not-connected error without throwing", async () => {
@@ -676,31 +802,6 @@ test("delete removes the credential, the db row, and the on-disk folder", async 
     extensions: { id: string }[];
   };
   expect(afterRescan.extensions).toEqual([]);
-});
-
-test("delete removes the polling cursor, so a reinstalled extension under the same id doesn't inherit a stale one", async () => {
-  const { fetch, dir, db } = await setup();
-  await writeManifest(dir, "notion", apiKeyManifest);
-  await discoverExtensions(db, dir);
-  await fetch(
-    new Request("http://localhost/api/extensions/notion/connect/api-key", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ apiKey: "k" }),
-    }),
-  );
-
-  // Simulate a real prior poll having stored a cursor (test-poll deliberately
-  // does not store one, so we do it directly).
-  setCursor(db, "notion", "some-prior-cursor");
-  expect(getCursor(db, "notion")).toBe("some-prior-cursor");
-
-  const response = await fetch(
-    new Request("http://localhost/api/extensions/notion/delete", { method: "POST" }),
-  );
-  expect(await response.json()).toEqual({ deleted: true });
-
-  expect(getCursor(db, "notion")).toBeNull();
 });
 
 test("delete of an unknown extension is a 404", async () => {
