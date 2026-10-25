@@ -1,6 +1,6 @@
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { PollResult, RawItem, TaskSource } from "../types";
+import type { LegacyPollResult, LegacyRawItem, LegacyTaskSource } from "../types";
 
 export interface SampleFolderOptions {
   /** Directory scanned on every poll. Missing directory is not an error. */
@@ -18,7 +18,7 @@ interface SampleFile {
   metadata?: unknown;
 }
 
-function fromText(name: string, text: string): RawItem {
+function fromText(name: string, text: string): LegacyRawItem {
   const lines = text.split(/\r?\n/);
   const firstNonEmpty = lines.findIndex((line) => line.trim().length > 0);
   const title = firstNonEmpty === -1 ? name : lines[firstNonEmpty]!.trim();
@@ -26,7 +26,7 @@ function fromText(name: string, text: string): RawItem {
   return { externalId: name, title, body, metadata: { file: name } };
 }
 
-function fromJson(name: string, parsed: SampleFile): RawItem {
+function fromJson(name: string, parsed: SampleFile): LegacyRawItem {
   const metadata =
     parsed.metadata && typeof parsed.metadata === "object" && !Array.isArray(parsed.metadata)
       ? (parsed.metadata as Record<string, unknown>)
@@ -51,13 +51,13 @@ function fromJson(name: string, parsed: SampleFile): RawItem {
  * Files are re-read on every poll; the poller skips filenames already ingested,
  * so editing a file does not create a second task — rename it to re-ingest.
  */
-export function createSampleFolderSource(options: SampleFolderOptions): TaskSource {
+export function createSampleFolderSource(options: SampleFolderOptions): LegacyTaskSource {
   const dir = options.dir;
 
   return {
     id: options.id ?? "sample",
 
-    async poll(cursor: string | null): Promise<PollResult> {
+    async poll(cursor: string | null): Promise<LegacyPollResult> {
       let names: string[];
       try {
         names = await readdir(dir);
@@ -75,7 +75,7 @@ export function createSampleFolderSource(options: SampleFolderOptions): TaskSour
         })
         .sort();
 
-      const items: RawItem[] = [];
+      const items: LegacyRawItem[] = [];
       for (const name of files) {
         const text = await readFile(join(dir, name), "utf8");
 

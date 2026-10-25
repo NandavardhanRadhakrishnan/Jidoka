@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { AgentRunner } from "../agent/runner";
 import { ExtensionManifestSchema, type ExtensionManifest } from "../domain/extension";
-import type { ExtensionSourceDeps, TaskSource } from "../sources/types";
+import type { ExtensionSourceDeps, LegacyTaskSource } from "../sources/types";
 
 export interface GenerateInput {
   kind: "create";
@@ -97,7 +97,7 @@ async function checkSourceShape(source: string): Promise<string | null> {
   await writeFile(path, source);
   try {
     const mod = (await import(pathToFileURL(path).href)) as {
-      createSource?: (deps: ExtensionSourceDeps) => TaskSource;
+      createSource?: (deps: ExtensionSourceDeps) => LegacyTaskSource;
     };
     if (typeof mod.createSource !== "function") {
       return "source.ts must export a function named createSource";

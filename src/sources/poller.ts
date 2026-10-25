@@ -3,14 +3,14 @@ import type { Task, TaskState } from "../domain/task";
 import { findTaskBySource, insertTask } from "../repo/tasks";
 import { wasMerged } from "../repo/mergedSourceItems";
 import { getCursor, setCursor } from "../repo/sourceState";
-import type { RawItem, TaskSource } from "./types";
+import type { LegacyRawItem, LegacyTaskSource } from "./types";
 import { isParticipantRole, normalizeIdentity, type SourceParticipant } from "../domain/roster";
 import { upsertSourceParticipants } from "../repo/participants";
 
 export type OnTask = (task: Task) => Promise<void>;
 /** Called when a source reports a revision change on a task that already
  *  passed through a rule at least once (done, or currently assigned). */
-export type OnTaskChanged = (task: Task, item: RawItem) => Promise<void>;
+export type OnTaskChanged = (task: Task, item: LegacyRawItem) => Promise<void>;
 
 /** States a revision change is allowed to reopen. Excludes `processing` (a
  *  rule is actively running) and every pre-triage state (no rule has run yet,
@@ -39,7 +39,7 @@ export function sanitizeParticipants(raw: unknown): { valid: SourceParticipant[]
 
 export async function pollOnce(
   db: Database,
-  source: TaskSource,
+  source: LegacyTaskSource,
   onTask: OnTask,
   onTaskChanged?: OnTaskChanged,
 ): Promise<Task[]> {
@@ -47,7 +47,7 @@ export async function pollOnce(
   const result = await source.poll(cursor);
 
   const created: Task[] = [];
-  const reopened: { task: Task; item: RawItem }[] = [];
+  const reopened: { task: Task; item: LegacyRawItem }[] = [];
   let droppedParticipants = 0;
   for (const item of result.items) {
     const { valid: participants, dropped } = sanitizeParticipants(item.participants);
@@ -98,10 +98,10 @@ export async function pollOnce(
 
 export function startPoller(
   db: Database,
-  sources: TaskSource[],
+  sources: LegacyTaskSource[],
   onTask: OnTask,
   intervalMs: number,
-  loadDynamicSources?: () => Promise<TaskSource[]>,
+  loadDynamicSources?: () => Promise<LegacyTaskSource[]>,
   onTaskChanged?: OnTaskChanged,
 ): { stop(): void } {
   let running = false;
@@ -114,7 +114,7 @@ export function startPoller(
     running = true;
 
     try {
-      let dynamicSources: TaskSource[] = [];
+      let dynamicSources: LegacyTaskSource[] = [];
       if (loadDynamicSources) {
         try {
           dynamicSources = await loadDynamicSources();

@@ -19,7 +19,7 @@ import { withConcurrencyLimit } from "./agent/limit";
 import { onTaskIngested, onTaskChanged, type AppDeps } from "./orchestrator";
 import { startPoller } from "./sources/poller";
 import { createSampleFolderSource } from "./sources/sample/folder";
-import type { TaskSource } from "./sources/types";
+import type { LegacyTaskSource } from "./sources/types";
 import { loadEnabledExtensionSources } from "./extensions/runtime";
 import { getSettings } from "./repo/settings";
 import { purgeExpiredAudit } from "./repo/audit";
@@ -159,7 +159,7 @@ if (import.meta.main) {
     );
   }
 
-  const sources: TaskSource[] = [];
+  const sources: LegacyTaskSource[] = [];
   if (app.config.sampleDir) {
     sources.push(createSampleFolderSource({ dir: app.config.sampleDir }));
     console.log(`Sample source watching ${app.config.sampleDir}`);

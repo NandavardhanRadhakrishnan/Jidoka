@@ -2,7 +2,7 @@ import { z } from "zod";
 import { completeJson, type AiProvider } from "../ai/provider";
 import type { Task } from "../domain/task";
 import type { TaskType } from "../domain/taskType";
-import type { RawItem } from "../sources/types";
+import type { LegacyRawItem } from "../sources/types";
 
 const REOPEN_SYSTEM = `A work item that was already handled has changed at its source (a new comment,
 reply or edit). Decide whether this specific change needs the connected user's attention again,
@@ -30,7 +30,7 @@ export async function assessReopenRelevance(
   provider: AiProvider,
   task: Task,
   type: TaskType,
-  item: RawItem,
+  item: LegacyRawItem,
   identity: string | null,
 ): Promise<{ relevant: boolean; reason?: string }> {
   const who = identity ? `The connected user's identity on this source: ${identity}\n\n` : "";

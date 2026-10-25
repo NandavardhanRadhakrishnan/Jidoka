@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import type { Database } from "bun:sqlite";
 import * as extensionsRepo from "../repo/extensions";
 import type { Vault } from "../vault/vault";
-import type { ExtensionSourceDeps, TaskSource } from "../sources/types";
+import type { ExtensionSourceDeps, LegacyTaskSource } from "../sources/types";
 
 // Bun caches ES modules by their resolved import path for the lifetime of the
 // process. If we always imported extensionsDir/<id>/source.ts, then once an
@@ -40,12 +40,12 @@ export async function loadOneExtensionSource(
   extensionsDir: string,
   vault: Vault,
   id: string,
-): Promise<TaskSource> {
+): Promise<LegacyTaskSource> {
   const record = extensionsRepo.get(db, id);
   if (!record) throw new Error(`unknown extension: ${id}`);
   const modulePath = await resolveCacheBustedModulePath(extensionsDir, id);
   const mod = (await import(modulePath)) as {
-    createSource?: (deps: ExtensionSourceDeps) => TaskSource;
+    createSource?: (deps: ExtensionSourceDeps) => LegacyTaskSource;
   };
   if (typeof mod.createSource !== "function") {
     throw new Error(`${id}: source.ts does not export createSource()`);
@@ -84,10 +84,10 @@ export async function loadEnabledExtensionSources(
   db: Database,
   extensionsDir: string,
   vault: Vault,
-): Promise<TaskSource[]> {
+): Promise<LegacyTaskSource[]> {
   const records = extensionsRepo.list(db).filter((record) => record.enabled && record.valid);
 
-  const sources: TaskSource[] = [];
+  const sources: LegacyTaskSource[] = [];
   for (const record of records) {
     try {
       sources.push(await loadOneExtensionSource(db, extensionsDir, vault, record.id));

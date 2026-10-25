@@ -38,7 +38,7 @@ import { findDependentSteps } from "./rule/dependents";
 import { createInProcessRunner, type AgentRunner } from "./agent/runner";
 import { buildRule } from "./rule/builder";
 import { listHintsForRule, listHintsForStep } from "./repo/hints";
-import type { RawItem } from "./sources/types";
+import type { LegacyRawItem } from "./sources/types";
 
 export interface AppDeps {
   db: Database;
@@ -588,7 +588,7 @@ function asThreadArray(value: unknown): ThreadPass[] {
  *  just closed and run the current active rule again over the refreshed
  *  content, so a rule's `agent` steps can resume their prior session and ask
  *  a follow-up instead of starting cold. */
-export async function onTaskChanged(deps: AppDeps, task: Task, item: RawItem): Promise<Task> {
+export async function onTaskChanged(deps: AppDeps, task: Task, item: LegacyRawItem): Promise<Task> {
   // A dismissed item gets a fresh full triage on the new content — what was
   // side-chatter may now be addressed to the user. Triage's own relevance
   // judgment decides; the user's own activity is simply dismissed again.

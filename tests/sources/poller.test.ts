@@ -7,7 +7,7 @@ import { pollOnce, startPoller } from "../../src/sources/poller";
 import { getCursor } from "../../src/repo/sourceState";
 import { findTaskBySource, deleteTask, updateTask } from "../../src/repo/tasks";
 import { recordMergedSourceItem } from "../../src/repo/mergedSourceItems";
-import type { TaskSource, RawItem } from "../../src/sources/types";
+import type { LegacyTaskSource, LegacyRawItem } from "../../src/sources/types";
 import type { Task } from "../../src/domain/task";
 
 function freshDb() {
@@ -16,7 +16,7 @@ function freshDb() {
   return db;
 }
 
-function fakeSource(pages: { items: RawItem[]; cursor: string | null }[]): TaskSource & {
+function fakeSource(pages: { items: LegacyRawItem[]; cursor: string | null }[]): LegacyTaskSource & {
   seen: (string | null)[];
 } {
   let call = 0;
@@ -102,7 +102,7 @@ test("pollOnce calls onTaskChanged when a done task's revision changes, without 
   const task = findTaskBySource(db, "fake", "m1")!;
   updateTask(db, task.id, { state: "done" });
 
-  const changed: { task: Task; item: RawItem }[] = [];
+  const changed: { task: Task; item: LegacyRawItem }[] = [];
   const second = await pollOnce(db, source, async () => {}, async (t, item) => {
     changed.push({ task: t, item });
   });
@@ -187,7 +187,7 @@ test("pollOnce calls onTaskChanged for an assigned_human task whose revision cha
 
 test("pollOnce keeps the old cursor when the source throws", async () => {
   const db = freshDb();
-  const source: TaskSource = {
+  const source: LegacyTaskSource = {
     id: "fake",
     async poll() {
       throw new Error("network down");
@@ -200,7 +200,7 @@ test("pollOnce keeps the old cursor when the source throws", async () => {
 
 test("startPoller merges a dynamic source's items into each tick", async () => {
   const db = freshDb();
-  const dynamicSource: TaskSource = {
+  const dynamicSource: LegacyTaskSource = {
     id: "dyn",
     async poll() {
       return { items: [{ externalId: "d1", title: "Dynamic", body: "" }], cursor: "dyn-cursor" };
@@ -230,7 +230,7 @@ test("startPoller merges a dynamic source's items into each tick", async () => {
 
 test("a failing loadDynamicSources does not stop the static sources from polling", async () => {
   const db = freshDb();
-  const staticSource: TaskSource = {
+  const staticSource: LegacyTaskSource = {
     id: "static",
     async poll() {
       return { items: [{ externalId: "s1", title: "Static", body: "" }], cursor: "static-cursor" };
@@ -267,13 +267,13 @@ test("a well-behaved static source still gets ingested even when a dynamic sourc
   // not itself a regression test for the `finally` fix (see Finding 1 test
   // below for that).
   const db = freshDb();
-  const staticSource: TaskSource = {
+  const staticSource: LegacyTaskSource = {
     id: "static",
     async poll() {
       return { items: [{ externalId: "s1", title: "Static", body: "" }], cursor: "static-cursor" };
     },
   };
-  const hangingDynamicSource: TaskSource = {
+  const hangingDynamicSource: LegacyTaskSource = {
     id: "hanging",
     poll() {
       return new Promise(() => {});
@@ -318,7 +318,7 @@ test("running resets even after a tick throws outside the per-source loop, so th
   // proceeds normally and ingests the static source's second item.
   const db = freshDb();
   let call = 0;
-  const staticSource: TaskSource = {
+  const staticSource: LegacyTaskSource = {
     id: "static",
     async poll() {
       const n = ++call;
@@ -351,7 +351,7 @@ test("running resets even after a tick throws outside the per-source loop, so th
     50,
     async () => {
       loadCall++;
-      return (loadCall === 1 ? {} : []) as unknown as TaskSource[];
+      return (loadCall === 1 ? {} : []) as unknown as LegacyTaskSource[];
     },
   );
 
@@ -368,7 +368,7 @@ test("running resets even after a tick throws outside the per-source loop, so th
 
 test("startPoller ignores a dynamic source whose id collides with a static source", async () => {
   const db = freshDb();
-  const staticSource: TaskSource = {
+  const staticSource: LegacyTaskSource = {
     id: "outlook",
     async poll() {
       return {
@@ -378,7 +378,7 @@ test("startPoller ignores a dynamic source whose id collides with a static sourc
     },
   };
   let dynamicPollCalls = 0;
-  const dynamicSource: TaskSource = {
+  const dynamicSource: LegacyTaskSource = {
     id: "outlook",
     async poll() {
       dynamicPollCalls++;
