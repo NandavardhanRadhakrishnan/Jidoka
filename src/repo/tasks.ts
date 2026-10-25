@@ -107,7 +107,7 @@ export function updateTask(db: Database, id: string, patch: TaskPatch): Task {
   db.query(
     `UPDATE tasks SET state = ?, type_id = ?, type_candidates = ?, assignee = ?,
                       deadline = ?, priority = ?, dedup_candidate_id = ?, context = ?,
-                      title = ?, body = ?, metadata = ?, updated_at = ? WHERE id = ?`,
+                      title = ?, body = ?, url = ?, metadata = ?, updated_at = ? WHERE id = ?`,
   ).run(
     next.state,
     next.typeId,
@@ -119,6 +119,7 @@ export function updateTask(db: Database, id: string, patch: TaskPatch): Task {
     JSON.stringify(next.context),
     next.title,
     next.body,
+    next.url,
     JSON.stringify(next.metadata),
     next.updatedAt,
     id,

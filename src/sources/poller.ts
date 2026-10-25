@@ -1,9 +1,21 @@
 import type { Database } from "bun:sqlite";
 import type { Task, TaskState } from "../domain/task";
-import { findTaskBySource, insertTask } from "../repo/tasks";
+import { findTaskBySource, getTask, insertTask, updateTask } from "../repo/tasks";
 import { wasMerged } from "../repo/mergedSourceItems";
 import { getCursor, setCursor } from "../repo/sourceState";
-import type { LegacyRawItem, LegacyTaskSource } from "./types";
+import { fileFailure, fileIngested, getItemRow, rowsForTask, taskForThread, touchSeen } from "../repo/sourceItems";
+import {
+  finishPoll,
+  getHorizon,
+  nextWindow,
+  setHorizon,
+  startPoll,
+  type PollKind,
+  type PollRecord,
+} from "../repo/sourcePolls";
+import { checkItem, checkList, MAX_KEY } from "./checks";
+import { composeTask } from "./compose";
+import type { LegacyRawItem, LegacyTaskSource, ListResult, SourceItem, TaskSource } from "./types";
 import { isParticipantRole, normalizeIdentity, type SourceParticipant } from "../domain/roster";
 import { upsertSourceParticipants } from "../repo/participants";
 
@@ -165,4 +177,292 @@ export function startPoller(
       clearInterval(timer);
     },
   };
+}
+
+// ── Jidoka-owned polling: the list({ since }) contract ───────────────────────
+// Jidoka picks each window, files every item by key in its own transaction and
+// routes items into tasks by thread key. Re-listing is always safe: a key that
+// is already filed with the same version is only touched.
+
+export interface PollHooks {
+  /** A task created by this run. Called after every item of the run is filed. */
+  onCreated(task: Task): Promise<void>;
+  /** An existing task that gained or changed items in this run, with those items. */
+  onChanged(task: Task, newItems: SourceItem[]): Promise<void>;
+}
+
+export interface PollOutcome {
+  poll: PollRecord;
+  /** Keys filed by this run that had no row before (Rescan's "recovered N"). */
+  recovered: number;
+}
+
+export interface PollOptions {
+  now?: Date;
+  timeoutMs?: number;
+}
+
+const LIST_TIMEOUT_MS = 60_000;
+
+type Failure = { key?: string; error: string };
+
+type Filed =
+  | { kind: "seen" }
+  | { kind: "thread_mismatch"; error: string }
+  | {
+      kind: "new" | "changed";
+      taskId: string;
+      createdTask: boolean;
+      /** The key had no row at all before this item. */
+      unseen: boolean;
+      item: SourceItem;
+      dropped: number;
+    };
+
+const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+function timeoutMessage(ms: number): string {
+  return `list timed out after ${ms % 1000 === 0 ? `${ms / 1000}s` : `${ms}ms`}`;
+}
+
+async function listWithTimeout(source: TaskSource, since: string | null, ms: number): Promise<ListResult> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(timeoutMessage(ms))), ms);
+  });
+  try {
+    // Through a .then so a list() that throws synchronously still lands here.
+    return await Promise.race([Promise.resolve().then(() => source.list({ since })), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** The extension's result is untrusted: anything without an items array is an
+ *  error poll, and malformed failure entries are kept, just without their key. */
+function readResult(raw: unknown): { items: unknown[]; failures: Failure[] } {
+  const result = raw as Partial<ListResult> | null;
+  if (typeof result !== "object" || result === null || !Array.isArray(result.items)) {
+    throw new Error("list did not return { items: [...] }");
+  }
+  const failures = (Array.isArray(result.failures) ? result.failures : []).map((entry: unknown): Failure => {
+    const f = (typeof entry === "object" && entry !== null ? entry : {}) as { key?: unknown; error?: unknown };
+    const error = typeof f.error === "string" && f.error.trim() ? f.error : "failure reported without a message";
+    const key = typeof f.key === "string" && f.key !== "" && f.key.length <= MAX_KEY ? f.key : undefined;
+    return key ? { key, error } : { error };
+  });
+  return { items: result.items, failures };
+}
+
+const isPlainObject = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+
+/** The fields of a checked item Jidoka stores, in their stored shape (an empty
+ *  thread key is no thread key). Participants are sanitized separately. */
+function normalize(raw: SourceItem): SourceItem {
+  const item: SourceItem = {
+    key: raw.key,
+    occurredAt: raw.occurredAt,
+    title: raw.title,
+    body: typeof raw.body === "string" ? raw.body : "",
+  };
+  if (typeof raw.threadKey === "string" && raw.threadKey !== "") item.threadKey = raw.threadKey;
+  if (raw.version !== undefined && raw.version !== null) item.version = String(raw.version);
+  if (typeof raw.url === "string" && raw.url !== "") item.url = raw.url;
+  if (isPlainObject(raw.metadata)) item.metadata = raw.metadata;
+  return item;
+}
+
+/** The task a new item's thread already lives on: through the item record
+ *  first, then a task created before the item record existed. */
+function taskForNewItem(db: Database, sourceId: string, threadKey: string): string | null {
+  const viaRows = taskForThread(db, sourceId, threadKey);
+  if (viaRows && getTask(db, viaRows)) return viaRows;
+  return findTaskBySource(db, sourceId, threadKey)?.id ?? null;
+}
+
+/** Files one checked item. Runs inside the item's transaction. */
+function fileItem(db: Database, sourceId: string, raw: SourceItem): Filed {
+  const row = getItemRow(db, sourceId, raw.key);
+  const known = row?.status === "ingested" ? row : null;
+  const base = normalize(raw);
+  if (known) {
+    const mismatch = checkItem(base, { threadKey: known.threadKey });
+    if (mismatch) return { kind: "thread_mismatch", error: mismatch };
+    if ((known.version ?? null) === (base.version ?? null)) {
+      touchSeen(db, sourceId, raw.key);
+      return { kind: "seen" };
+    }
+  }
+
+  // A changed item stays on its task. A new item, or a changed one whose task
+  // was deleted, is routed by its thread.
+  const threadKey = base.threadKey ?? base.key;
+  let taskId = known?.taskId && getTask(db, known.taskId) ? known.taskId : taskForNewItem(db, sourceId, threadKey);
+  let createdTask = false;
+  if (!taskId) {
+    taskId = insertTask(db, {
+      sourceId,
+      externalId: threadKey,
+      url: base.url ?? null,
+      title: base.title,
+      body: base.body,
+      metadata: base.metadata ?? {},
+    }).id;
+    createdTask = true;
+  }
+
+  const { valid: participants, dropped } = sanitizeParticipants(raw.participants);
+  const item: SourceItem = { ...base, participants };
+  fileIngested(db, sourceId, item, taskId);
+  upsertSourceParticipants(db, taskId, participants);
+  updateTask(db, taskId, composeTask(rowsForTask(db, taskId)));
+  return { kind: known ? "changed" : "new", taskId, createdTask, unseen: !row, item, dropped };
+}
+
+async function runList(
+  db: Database,
+  source: TaskSource,
+  kind: PollKind,
+  since: string | null,
+  hooks: PollHooks,
+  opts: PollOptions,
+): Promise<PollOutcome> {
+  const started = startPoll(db, source.id, kind, since);
+  const counts = { seen: 0, new: 0, changed: 0, failed: 0 };
+  const unkeyedFailures: Failure[] = [];
+  const finish = (error?: string): PollRecord => {
+    if (error) console.error(`[poller] ${source.id}: ${error}`);
+    return finishPoll(db, started.id, {
+      outcome: error ? "error" : "ok",
+      ...(error ? { error } : {}),
+      ...counts,
+      unkeyedFailures,
+    });
+  };
+
+  let result: { items: unknown[]; failures: Failure[] };
+  try {
+    result = readResult(await listWithTimeout(source, since, opts.timeoutMs ?? LIST_TIMEOUT_MS));
+  } catch (error) {
+    return { poll: finish(message(error)), recovered: 0 };
+  }
+
+  const created = new Set<string>();
+  const changes = new Map<string, SourceItem[]>();
+  const filingErrors: string[] = [];
+  let recovered = 0;
+  let droppedParticipants = 0;
+
+  // A failure never downgrades an ingested row (it goes to the poll's unkeyed
+  // list, key in the message) and never un-dismisses a dismissed one.
+  const recordFailure = (key: string | undefined, error: string) => {
+    if (!key) {
+      counts.failed++;
+      unkeyedFailures.push({ error });
+      return;
+    }
+    const filed = db.transaction(() => fileFailure(db, source.id, key, error, since))();
+    if (filed === "dismissed") return;
+    counts.failed++;
+    if (filed === "already_ingested") unkeyedFailures.push({ error: `${key}: ${error}` });
+  };
+
+  try {
+    counts.seen = result.items.length;
+    const { valid, failures: checkFailures } = checkList(result.items);
+    for (const f of checkFailures) recordFailure(f.key, f.error);
+
+    for (const raw of valid) {
+      let filed: Filed;
+      try {
+        filed = db.transaction(() => fileItem(db, source.id, raw))();
+      } catch (error) {
+        filingErrors.push(`filing ${raw.key} failed: ${message(error)}`);
+        continue;
+      }
+      if (filed.kind === "seen") continue;
+      if (filed.kind === "thread_mismatch") {
+        recordFailure(raw.key, filed.error);
+        continue;
+      }
+      counts[filed.kind]++;
+      if (filed.unseen) recovered++;
+      droppedParticipants += filed.dropped;
+      if (filed.createdTask) created.add(filed.taskId);
+      else if (!created.has(filed.taskId)) {
+        changes.set(filed.taskId, [...(changes.get(filed.taskId) ?? []), filed.item]);
+      }
+    }
+
+    for (const f of result.failures) recordFailure(f.key, f.error);
+  } catch (error) {
+    filingErrors.push(message(error));
+  }
+
+  if (droppedParticipants) {
+    console.warn(`[poller] ${source.id}: dropped ${droppedParticipants} malformed participant(s)`);
+  }
+  const poll = finish(filingErrors.length ? filingErrors.join("; ") : undefined);
+
+  const runHook = async (label: string, fn: () => Promise<void>) => {
+    try {
+      await fn();
+    } catch (error) {
+      console.error(`[poller] ${source.id}: ${label} failed:`, error);
+    }
+  };
+  for (const id of created) {
+    const task = getTask(db, id);
+    if (task) await runHook(`onCreated for task ${id}`, () => hooks.onCreated(task));
+  }
+  for (const [id, items] of changes) {
+    const task = getTask(db, id);
+    if (task) await runHook(`onChanged for task ${id}`, () => hooks.onChanged(task, items));
+  }
+
+  return { poll, recovered };
+}
+
+/** One regular poll: lists from the next window, recording the horizon on the
+ *  source's first poll. */
+export async function pollSource(
+  db: Database,
+  source: TaskSource,
+  hooks: PollHooks,
+  opts: PollOptions = {},
+): Promise<PollOutcome> {
+  const { since, isFirst } = nextWindow(db, source.id, opts.now ?? new Date());
+  if (isFirst) setHorizon(db, source.id, since);
+  return runList(db, source, "poll", since, hooks, opts);
+}
+
+/** Re-lists the window a failed key was seen in. Never moves the normal window. */
+export async function retryFailure(
+  db: Database,
+  source: TaskSource,
+  key: string,
+  hooks: PollHooks,
+  opts: PollOptions = {},
+): Promise<PollOutcome> {
+  const row = getItemRow(db, source.id, key);
+  if (row?.status !== "failed") throw new Error(`${source.id}: no failed item with key ${key}`);
+  return runList(db, source, "retry", row.failedWindow, hooks, opts);
+}
+
+/** Re-lists everything since the source's horizon, filing unseen keys. Never
+ *  moves the normal window. Before any poll, it records the horizon the first
+ *  poll would have. */
+export async function rescanSource(
+  db: Database,
+  source: TaskSource,
+  hooks: PollHooks,
+  opts: PollOptions = {},
+): Promise<PollOutcome> {
+  let horizon = getHorizon(db, source.id);
+  if (!horizon) {
+    horizon = nextWindow(db, source.id, opts.now ?? new Date()).since;
+    setHorizon(db, source.id, horizon);
+  }
+  return runList(db, source, "rescan", horizon, hooks, opts);
 }

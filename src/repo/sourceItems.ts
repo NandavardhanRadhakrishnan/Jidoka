@@ -111,17 +111,28 @@ export function touchSeen(db: Database, sourceId: string, key: string): void {
   db.query("UPDATE source_items SET last_seen_at = ? WHERE source_id = ? AND key = ?").run(now(), sourceId, key);
 }
 
-/** Records a failed item. Never downgrades a row that is already ingested. */
+/** Records a failed item. Never downgrades a row that is already ingested,
+ *  and never un-dismisses one: a dismissal is the user's decision, so a repeat
+ *  failure only refreshes its error. */
 export function fileFailure(
   db: Database,
   sourceId: string,
   key: string,
   error: string,
   window: string | null,
-): "recorded" | "already_ingested" {
+): "recorded" | "already_ingested" | "dismissed" {
   const existing = getItemRow(db, sourceId, key);
   if (existing?.status === "ingested") return "already_ingested";
   const at = now();
+  if (existing?.status === "dismissed") {
+    db.query("UPDATE source_items SET error = ?, last_seen_at = ? WHERE source_id = ? AND key = ?").run(
+      error,
+      at,
+      sourceId,
+      key,
+    );
+    return "dismissed";
+  }
   db.query(
     `INSERT INTO source_items (source_id, key, status, error, failed_window, first_seen_at, last_seen_at)
      VALUES (?, ?, 'failed', ?, ?, ?, ?)

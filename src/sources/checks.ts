@@ -1,6 +1,6 @@
 import type { SourceItem } from "./types";
 
-const MAX_KEY = 512;
+export const MAX_KEY = 512;
 
 /** Validates one item from an extension (untrusted output). Returns an error
  *  message, or null when the item is fine. `known` is what Jidoka stored the

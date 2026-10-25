@@ -62,5 +62,6 @@ export interface TaskPatch {
   /** A reopened task's source content, refreshed from the latest poll. */
   title?: string;
   body?: string;
+  url?: string | null;
   metadata?: Record<string, unknown>;
 }

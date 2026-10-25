@@ -183,3 +183,15 @@ test("every state change is audited with from and to, and a non-state patch is n
   expect(changes).toHaveLength(1);
   expect(changes[0]!.data).toEqual({ from: "ingested", to: "assigned_human", assignee: "human" });
 });
+
+test("updateTask patches the url", () => {
+  const db = freshDb();
+  const task = insertTask(db, sample);
+
+  const updated = updateTask(db, task.id, { url: "https://example.test/newest" });
+
+  expect(updated.url).toBe("https://example.test/newest");
+  expect(getTask(db, task.id)?.url).toBe("https://example.test/newest");
+  expect(updateTask(db, task.id, { url: null }).url).toBeNull();
+  expect(getTask(db, task.id)?.url).toBeNull();
+});

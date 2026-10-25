@@ -153,3 +153,12 @@ test("repointTask moves rows; deleting the task nulls taskId", () => {
   deleteTask(db, b);
   expect(getItemRow(db, "s", "k1")!.taskId).toBeNull();
 });
+
+test("fileFailure on a dismissed key keeps it dismissed and its window", () => {
+  const { db } = setup();
+  fileFailure(db, "s", "k9", "boom", "w1");
+  dismissFailure(db, "s", "k9");
+  expect(fileFailure(db, "s", "k9", "boom again", "w2")).toBe("dismissed");
+  expect(getItemRow(db, "s", "k9")).toMatchObject({ status: "dismissed", error: "boom again", failedWindow: "w1" });
+  expect(countFailures(db, "s")).toBe(0);
+});
