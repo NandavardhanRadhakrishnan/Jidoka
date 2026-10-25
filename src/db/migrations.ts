@@ -141,4 +141,45 @@ export const MIGRATIONS: string[] = [
   `CREATE UNIQUE INDEX IF NOT EXISTS task_participants_human
      ON task_participants (task_id, person_id) WHERE added_by = 'human'`,
   `CREATE INDEX IF NOT EXISTS task_participants_identity ON task_participants (identity)`,
+  `CREATE TABLE IF NOT EXISTS source_items (
+     source_id TEXT NOT NULL,
+     key TEXT NOT NULL,
+     thread_key TEXT,
+     version TEXT,
+     occurred_at TEXT,
+     title TEXT,
+     body TEXT,
+     url TEXT,
+     metadata TEXT NOT NULL DEFAULT '{}',
+     participants TEXT NOT NULL DEFAULT '[]',
+     task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL,
+     status TEXT NOT NULL,
+     error TEXT,
+     failed_window TEXT,
+     first_seen_at TEXT NOT NULL,
+     last_seen_at TEXT NOT NULL,
+     PRIMARY KEY (source_id, key)
+   )`,
+  `CREATE INDEX IF NOT EXISTS source_items_thread ON source_items (source_id, thread_key)`,
+  `CREATE INDEX IF NOT EXISTS source_items_task ON source_items (task_id)`,
+  `CREATE TABLE IF NOT EXISTS source_polls (
+     id TEXT PRIMARY KEY,
+     source_id TEXT NOT NULL,
+     kind TEXT NOT NULL,
+     since TEXT,
+     started_at TEXT NOT NULL,
+     finished_at TEXT,
+     outcome TEXT,
+     error TEXT,
+     seen INTEGER NOT NULL DEFAULT 0,
+     new INTEGER NOT NULL DEFAULT 0,
+     changed INTEGER NOT NULL DEFAULT 0,
+     failed INTEGER NOT NULL DEFAULT 0,
+     unkeyed_failures TEXT NOT NULL DEFAULT '[]'
+   )`,
+  `CREATE INDEX IF NOT EXISTS source_polls_source ON source_polls (source_id, started_at)`,
+  `CREATE TABLE IF NOT EXISTS source_horizons (
+     source_id TEXT PRIMARY KEY,
+     horizon TEXT NOT NULL
+   )`,
 ];
