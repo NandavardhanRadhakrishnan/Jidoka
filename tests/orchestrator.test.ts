@@ -25,6 +25,7 @@ import {
   completeTask,
   reopenTask,
   drainPendingChange,
+  settleBackgroundDrains,
   type AppDeps,
 } from "../src/orchestrator";
 import { insertHint } from "../src/repo/hints";
@@ -64,6 +65,11 @@ const RELEVANT = JSON.stringify({ relevant: true });
 /** A new item on a task's thread, as the poller hands it to onTaskChanged. */
 function newItem(key: string, over: Partial<SourceItem> = {}): SourceItem {
   return { key, occurredAt: "2026-01-02T00:00:00.000Z", title: "Re: Where is my order?", body: "Any news?", ...over };
+}
+
+/** A pending-change entry for an item of the sample's source. */
+function pending(key: string, sourceId = sample.sourceId) {
+  return { sourceId, key };
 }
 
 test("an unmatched task creates a proposed type and waits for onboarding", async () => {
@@ -1515,15 +1521,15 @@ function typeWithRule(db: ReturnType<typeof freshDb>) {
 for (const state of ["processing", "ingested", "needs_type_confirmation", "needs_onboarding", "needs_dedup_confirmation"] as const) {
   test(`onTaskChanged on a task in ${state} only records the new keys as a pending change`, async () => {
     const db = freshDb();
-    const task = updateTask(db, insertTask(db, sample).id, { state, context: { pendingChange: ["c-1"] } });
+    const task = updateTask(db, insertTask(db, sample).id, { state, context: { pendingChange: [pending("c-1")] } });
     const provider = scripted([]);
 
     const result = await onTaskChanged({ ...deps(db, []), provider }, task, [newItem("c-1"), newItem("c-2")]);
 
     expect(provider.prompts).toHaveLength(0);
     expect(result.state).toBe(state);
-    expect(result.context.pendingChange).toEqual(["c-1", "c-2"]);
-    expect(getTask(db, task.id)?.context.pendingChange).toEqual(["c-1", "c-2"]);
+    expect(result.context.pendingChange).toEqual([pending("c-1"), pending("c-2")]);
+    expect(getTask(db, task.id)?.context.pendingChange).toEqual([pending("c-1"), pending("c-2")]);
   });
 }
 
@@ -1558,7 +1564,7 @@ test("a reply that arrives mid-run is followed up once after the run lands, and 
   expect(thread[0]?.outputs).toEqual({ summary: "pass 1" });
 });
 
-test("a pending change survives a failed run, and drains once the task is completed", async () => {
+test("a pending change survives a failed run, and drains on its own once the task is completed", async () => {
   const db = freshDb();
   const type = typeWithRule(db);
   const task = updateTask(db, insertTask(db, sample).id, { typeId: type.id, state: "needs_onboarding" });
@@ -1578,27 +1584,28 @@ test("a pending change survives a failed run, and drains once the task is comple
 
   const prompts = (app.provider as ReturnType<typeof scripted>).prompts;
   expect(failed.state).toBe("failed");
-  expect(failed.context.pendingChange).toEqual(["c-2"]);
+  expect(failed.context.pendingChange).toEqual([pending("c-2")]);
   expect(prompts).toHaveLength(1);
 
   const done = completeTask(app, task.id);
-  expect(done.context.pendingChange).toEqual(["c-2"]);
-  const result = await drainPendingChange(app, done);
+  expect(done.state).toBe("done");
+  await settleBackgroundDrains();
 
   expect(prompts).toHaveLength(3);
   expect(prompts[1]).toContain("Still waiting");
+  const result = getTask(db, task.id)!;
   expect(result.state).toBe("assigned_human");
   expect(result.context.pendingChange).toBeUndefined();
 });
 
 test("drainPendingChange leaves a busy task alone, and a task without a pending change untouched", async () => {
   const db = freshDb();
-  const busy = updateTask(db, insertTask(db, sample).id, { state: "processing", context: { pendingChange: ["c-2"] } });
+  const busy = updateTask(db, insertTask(db, sample).id, { state: "processing", context: { pendingChange: [pending("c-2")] } });
   const idle = updateTask(db, insertTask(db, { ...sample, externalId: "m2" }).id, { state: "assigned_human" });
   const provider = scripted([]);
   const app = { ...deps(db, []), provider };
 
-  expect((await drainPendingChange(app, busy)).context.pendingChange).toEqual(["c-2"]);
+  expect((await drainPendingChange(app, busy)).context.pendingChange).toEqual([pending("c-2")]);
   expect(await drainPendingChange(app, idle)).toEqual(idle);
   expect(provider.prompts).toHaveLength(0);
 });
@@ -1609,7 +1616,7 @@ test("skipping onboarding drains a change that arrived while the task waited", a
   const task = updateTask(db, insertTask(db, sample).id, {
     typeId: type.id,
     state: "needs_onboarding",
-    context: { pendingChange: ["c-2"] },
+    context: { pendingChange: [pending("c-2")] },
   });
   fileIngested(db, task.sourceId, newItem("c-2", { body: "thanks!" }), task.id);
   const provider = scripted([() => JSON.stringify({ relevant: false, reason: "just thanks" })]);
@@ -1642,4 +1649,110 @@ test("a task dismissed by triage re-triages for a change that arrived during tri
   expect(result.typeId).toBe(type.id);
   expect(result.state).toBe("needs_onboarding");
   expect(result.context.pendingChange).toBeUndefined();
+});
+
+test("reopening a completed task drains a change left on it, in the background", async () => {
+  const db = freshDb();
+  const type = typeWithRule(db);
+  const task = updateTask(db, insertTask(db, sample).id, {
+    typeId: type.id,
+    state: "done",
+    assignee: "human",
+    context: { pendingChange: [pending("c-2")] },
+  });
+  fileIngested(db, task.sourceId, newItem("c-2", { body: "one more thing" }), task.id);
+  const provider = scripted([() => RELEVANT, () => "pass 2"]);
+  const app = { ...deps(db, []), provider };
+
+  expect(reopenTask(app, task.id).state).toBe("assigned_human");
+  await settleBackgroundDrains();
+
+  expect(provider.prompts[0]).toContain("one more thing");
+  expect(getTask(db, task.id)?.context.pendingChange).toBeUndefined();
+  expect(getTask(db, task.id)?.context.summary).toBe("pass 2");
+});
+
+test("a reply on a thread merged in from another source drains on the surviving task", async () => {
+  const db = freshDb();
+  const type = typeWithRule(db);
+  const target = updateTask(db, insertTask(db, { ...sample, externalId: "m0" }).id, {
+    typeId: type.id,
+    state: "assigned_human",
+    assignee: "human",
+  });
+  const dup = insertTask(db, { ...sample, sourceId: "gh", externalId: "gh-1" });
+  fileIngested(db, "gh", newItem("gh-1", { threadKey: "gh-1" }), dup.id);
+  mergeTasks({ ...deps(db, []), provider: scripted([]) }, dup.id, target.id);
+  // The poller routes the reply to the target through the repointed thread
+  // row while the target is busy.
+  updateTask(db, target.id, { state: "processing" });
+  const reply = newItem("gh-2", { threadKey: "gh-1", body: "reply from the merged thread" });
+  fileIngested(db, "gh", reply, target.id);
+  const provider = scripted([() => RELEVANT, () => "pass 2"]);
+  const app = { ...deps(db, []), provider };
+
+  await onTaskChanged(app, getTask(db, target.id)!, [reply]);
+  expect(getTask(db, target.id)?.context.pendingChange).toEqual([pending("gh-2", "gh")]);
+  const landed = updateTask(db, target.id, { state: "assigned_human", assignee: "human" });
+  const result = await drainPendingChange(app, landed);
+
+  expect(provider.prompts[0]).toContain("reply from the merged thread");
+  expect(result.context.pendingChange).toBeUndefined();
+  expect(result.context.summary).toBe("pass 2");
+});
+
+test("a failed drained re-triage puts the pending change back", async () => {
+  const db = freshDb();
+  const task = updateTask(db, insertTask(db, sample).id, {
+    state: "dismissed",
+    context: { pendingChange: [pending("c-2")] },
+  });
+  fileIngested(db, task.sourceId, newItem("c-2"), task.id);
+  const provider = scripted([
+    () => {
+      throw new Error("provider down");
+    },
+  ]);
+
+  await expect(drainPendingChange({ ...deps(db, []), provider }, task)).rejects.toThrow(/provider down/);
+
+  expect(getTask(db, task.id)?.state).toBe("dismissed");
+  expect(getTask(db, task.id)?.context.pendingChange).toEqual([pending("c-2")]);
+});
+
+test("merging carries the duplicate's pending change onto a waiting target", () => {
+  const db = freshDb();
+  const target = updateTask(db, insertTask(db, { ...sample, externalId: "m0" }).id, { state: "needs_onboarding" });
+  const dup = updateTask(db, insertTask(db, { ...sample, sourceId: "gh", externalId: "gh-1" }).id, {
+    state: "needs_dedup_confirmation",
+    context: { pendingChange: [pending("gh-2", "gh")] },
+  });
+  fileIngested(db, "gh", newItem("gh-2"), dup.id);
+
+  mergeTasks(deps(db, []), dup.id, target.id);
+
+  expect(getTask(db, target.id)?.context.pendingChange).toEqual([pending("gh-2", "gh")]);
+});
+
+test("merging a duplicate's pending change into a reopenable target follows it up", async () => {
+  const db = freshDb();
+  const type = typeWithRule(db);
+  const target = updateTask(db, insertTask(db, { ...sample, externalId: "m0" }).id, {
+    typeId: type.id,
+    state: "assigned_human",
+    assignee: "human",
+  });
+  const dup = updateTask(db, insertTask(db, { ...sample, sourceId: "gh", externalId: "gh-1" }).id, {
+    state: "needs_dedup_confirmation",
+    context: { pendingChange: [pending("gh-2", "gh")] },
+  });
+  fileIngested(db, "gh", newItem("gh-2", { body: "the duplicate's reply" }), dup.id);
+  const provider = scripted([() => RELEVANT, () => "pass 2"]);
+
+  mergeTasks({ ...deps(db, []), provider }, dup.id, target.id);
+  await settleBackgroundDrains();
+
+  expect(provider.prompts[0]).toContain("the duplicate's reply");
+  expect(getTask(db, target.id)?.context.pendingChange).toBeUndefined();
+  expect(getTask(db, target.id)?.context.summary).toBe("pass 2");
 });

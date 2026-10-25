@@ -6,7 +6,7 @@ import type { Assignee, Task, TaskState } from "./domain/task";
 import type { Rule } from "./domain/rule";
 import { resolvePriority, type Priority } from "./domain/priority";
 import { getTask, listTasks, updateTask, deleteTask } from "./repo/tasks";
-import { getItemRow, repointTask } from "./repo/sourceItems";
+import { getItemRow, repointTask, rowForTaskKey } from "./repo/sourceItems";
 import { moveParticipants } from "./repo/participants";
 import { recordAudit } from "./repo/audit";
 import { getResolvedIdentity } from "./repo/extensions";
@@ -69,9 +69,57 @@ function ruleLogFromContext(context: Record<string, unknown>): StepLogEntry[] {
   return (context.ruleLog as StepLogEntry[] | undefined) ?? [];
 }
 
-function pendingKeys(context: Record<string, unknown>): string[] {
+/** One deferred item. Source-qualified because a merged task holds rows of
+ *  several sources, and `source_items` is keyed by `(source_id, key)`. */
+interface PendingEntry {
+  sourceId: string;
+  key: string;
+}
+
+function pendingEntries(context: Record<string, unknown>): PendingEntry[] {
   const value = context.pendingChange;
-  return Array.isArray(value) ? value.filter((k): k is string => typeof k === "string") : [];
+  if (!Array.isArray(value)) return [];
+  return value.filter(
+    (e): e is PendingEntry =>
+      typeof e === "object" && e !== null && typeof e.sourceId === "string" && typeof e.key === "string",
+  );
+}
+
+/** `a` then whatever of `b` isn't already in it. */
+function unionEntries(a: PendingEntry[], b: PendingEntry[]): PendingEntry[] {
+  const seen = new Set<string>();
+  const out: PendingEntry[] = [];
+  for (const e of [...a, ...b]) {
+    const id = JSON.stringify([e.sourceId, e.key]);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push({ sourceId: e.sourceId, key: e.key });
+  }
+  return out;
+}
+
+/** Puts entries back on a task (unioned with whatever it holds now). */
+function addPendingEntries(deps: AppDeps, taskId: string, entries: PendingEntry[]): void {
+  const stored = getTask(deps.db, taskId);
+  if (!stored || !entries.length) return;
+  updateTask(deps.db, taskId, {
+    context: { ...stored.context, pendingChange: unionEntries(pendingEntries(stored.context), entries) },
+  });
+}
+
+/** Drains started by a synchronous caller (completeTask, reopenTask,
+ *  mergeTasks) run here, so tests and shutdown can wait for them. */
+const backgroundDrains = new Set<Promise<unknown>>();
+
+function drainInBackground(deps: AppDeps, task: Task): void {
+  const run: Promise<unknown> = drainQuietly(deps, task).finally(() => backgroundDrains.delete(run));
+  backgroundDrains.add(run);
+}
+
+/** Resolves once every background drain (including any started meanwhile)
+ *  has finished. */
+export async function settleBackgroundDrains(): Promise<void> {
+  while (backgroundDrains.size) await Promise.allSettled([...backgroundDrains]);
 }
 
 /** A change can be recorded in `context.pendingChange` while a caller is
@@ -81,8 +129,8 @@ function pendingKeys(context: Record<string, unknown>): string[] {
 function carryPendingChange(deps: AppDeps, taskId: string, context: Record<string, unknown>): Record<string, unknown> {
   const { pendingChange: _snapshot, ...rest } = context;
   const stored = getTask(deps.db, taskId);
-  const keys = stored ? pendingKeys(stored.context) : [];
-  return keys.length ? { ...rest, pendingChange: keys } : rest;
+  const entries = stored ? pendingEntries(stored.context) : [];
+  return entries.length ? { ...rest, pendingChange: entries } : rest;
 }
 
 /** `drainPendingChange` for callers that must not fail because a deferred
@@ -573,7 +621,7 @@ export function completeTask(deps: AppDeps, taskId: string, note?: string): Task
     data: { note: note?.trim() || null },
   });
 
-  return updateTask(deps.db, taskId, {
+  const completed = updateTask(deps.db, taskId, {
     state: "done",
     context: {
       ...task.context,
@@ -581,6 +629,10 @@ export function completeTask(deps: AppDeps, taskId: string, note?: string): Task
       ...(note?.trim() ? { completionNote: note.trim() } : {}),
     },
   });
+  // A change left on the task while it couldn't be followed up (e.g. it was
+  // `failed`) runs now; this stays synchronous for the HTTP route.
+  drainInBackground(deps, completed);
+  return completed;
 }
 
 /** Undo a completion: back to whoever it was assigned to, or to a human. */
@@ -590,11 +642,13 @@ export function reopenTask(deps: AppDeps, taskId: string): Task {
   recordAudit(deps.db, { kind: "reopened", actor: "human", taskId, typeId: task.typeId, data: {} });
 
   const { completedAt: _completedAt, completionNote: _note, ...context } = task.context;
-  return updateTask(deps.db, taskId, {
+  const reopened = updateTask(deps.db, taskId, {
     state: task.assignee === "ai" ? "assigned_ai" : "assigned_human",
     assignee: task.assignee ?? "human",
     context,
   });
+  drainInBackground(deps, reopened);
+  return reopened;
 }
 
 interface ThreadPass {
@@ -647,8 +701,17 @@ export async function onTaskChanged(deps: AppDeps, task: Task, newItems: SourceI
   // moved on (or gained a pending change) since the snapshot was taken.
   task = getTask(deps.db, task.id) ?? task;
   if (DEFER_CHANGE_STATES.has(task.state)) {
-    const keys = [...new Set([...pendingKeys(task.context), ...newItems.map((item) => item.key)])];
-    return updateTask(deps.db, task.id, { context: { ...task.context, pendingChange: keys } });
+    const taskId = task.id;
+    const fallbackSource = task.sourceId;
+    // The poller has already filed each item against this task; its row says
+    // which source it came from.
+    const entries = newItems.map((item) => ({
+      sourceId: rowForTaskKey(deps.db, taskId, item.key)?.sourceId ?? fallbackSource,
+      key: item.key,
+    }));
+    return updateTask(deps.db, task.id, {
+      context: { ...task.context, pendingChange: unionEntries(pendingEntries(task.context), entries) },
+    });
   }
 
   // A dismissed item gets a fresh full triage on the new content — what was
@@ -709,18 +772,20 @@ export async function onTaskChanged(deps: AppDeps, task: Task, newItems: SourceI
 
 /** Runs the change flow once for a change that was deferred while the task
  *  was busy, now that it sits in a state the flow runs from. A no-op
- *  otherwise. Keys with no item row left are skipped. */
+ *  otherwise. Entries with no item row left are skipped. The flag is cleared
+ *  before the flow runs, which bounds the recursion; if the flow throws, the
+ *  entries are put back so the change is never silently dropped. */
 export async function drainPendingChange(deps: AppDeps, task: Task): Promise<Task> {
   const current = getTask(deps.db, task.id);
   if (!current) return task;
-  const keys = pendingKeys(current.context);
-  if (!keys.length || !REOPENABLE_STATES.has(current.state)) return current;
+  const entries = pendingEntries(current.context);
+  if (!entries.length || !REOPENABLE_STATES.has(current.state)) return current;
 
   const { pendingChange: _pending, ...context } = current.context;
   const cleared = updateTask(deps.db, current.id, { context });
   const newItems: SourceItem[] = [];
-  for (const key of keys) {
-    const row = getItemRow(deps.db, current.sourceId, key);
+  for (const { sourceId, key } of entries) {
+    const row = getItemRow(deps.db, sourceId, key);
     if (!row) continue;
     newItems.push({
       key: row.key,
@@ -735,7 +800,12 @@ export async function drainPendingChange(deps: AppDeps, task: Task): Promise<Tas
     });
   }
   if (!newItems.length) return cleared;
-  return onTaskChanged(deps, cleared, newItems);
+  try {
+    return await onTaskChanged(deps, cleared, newItems);
+  } catch (error) {
+    addPendingEntries(deps, current.id, entries);
+    throw error;
+  }
 }
 
 export async function skipOnboarding(deps: AppDeps, taskId: string): Promise<Task> {
@@ -783,8 +853,15 @@ export function mergeTasks(deps: AppDeps, duplicateTaskId: string, intoTaskId: s
     title: duplicate.title,
     mergedAt: new Date().toISOString(),
   };
+  // A change deferred on the duplicate (it waited in needs_dedup_confirmation)
+  // belongs to the surviving task now.
+  const carried = pendingEntries(duplicate.context);
   const updated = updateTask(deps.db, target.id, {
-    context: { ...target.context, mergedFrom: [...asMergedFromArray(target.context.mergedFrom), record] },
+    context: {
+      ...target.context,
+      mergedFrom: [...asMergedFromArray(target.context.mergedFrom), record],
+      ...(carried.length ? { pendingChange: unionEntries(pendingEntries(target.context), carried) } : {}),
+    },
   });
   // One entry on each side, so the trail is findable from either task — the
   // duplicate's own entry outlives its row (audit_log has no foreign keys).
@@ -809,6 +886,7 @@ export function mergeTasks(deps: AppDeps, duplicateTaskId: string, intoTaskId: s
   // merged-away conversation to the surviving one.
   repointTask(deps.db, duplicate.id, target.id);
   deleteTask(deps.db, duplicate.id);
+  if (carried.length) drainInBackground(deps, updated);
   return updated;
 }
 

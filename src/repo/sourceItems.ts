@@ -178,6 +178,15 @@ export function rowsForTask(db: Database, taskId: string): SourceItemRow[] {
   return rows.map(toRow);
 }
 
+/** A task's row for an item key, from whichever source filed it — after a
+ *  cross-source merge one task holds rows of several sources. */
+export function rowForTaskKey(db: Database, taskId: string, key: string): SourceItemRow | null {
+  const row = db
+    .query("SELECT * FROM source_items WHERE task_id = ? AND key = ? ORDER BY rowid DESC LIMIT 1")
+    .get(taskId, key) as Row | null;
+  return row ? toRow(row) : null;
+}
+
 export function repointTask(db: Database, fromTaskId: string, toTaskId: string): void {
   db.query("UPDATE source_items SET task_id = ? WHERE task_id = ?").run(toTaskId, fromTaskId);
 }

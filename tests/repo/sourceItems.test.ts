@@ -9,6 +9,7 @@ import {
   getItemRow,
   listFailures,
   repointTask,
+  rowForTaskKey,
   rowsForTask,
   taskForThread,
   touchSeen,
@@ -161,4 +162,13 @@ test("fileFailure on a dismissed key keeps it dismissed and its window", () => {
   expect(fileFailure(db, "s", "k9", "boom again", "w2")).toBe("dismissed");
   expect(getItemRow(db, "s", "k9")).toMatchObject({ status: "dismissed", error: "boom again", failedWindow: "w1" });
   expect(countFailures(db, "s")).toBe(0);
+});
+
+test("rowForTaskKey finds a task's row by key whatever its source", () => {
+  const { db, task } = setup();
+  const t = task();
+  fileIngested(db, "other-source", item("k1"), t);
+  expect(rowForTaskKey(db, t, "k1")?.sourceId).toBe("other-source");
+  expect(rowForTaskKey(db, t, "missing")).toBeNull();
+  expect(rowForTaskKey(db, task(), "k1")).toBeNull();
 });
