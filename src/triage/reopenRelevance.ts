@@ -2,7 +2,7 @@ import { z } from "zod";
 import { completeJson, type AiProvider } from "../ai/provider";
 import type { Task } from "../domain/task";
 import type { TaskType } from "../domain/taskType";
-import type { LegacyRawItem } from "../sources/types";
+import type { SourceItem } from "../sources/types";
 
 const REOPEN_SYSTEM = `A work item that was already handled has changed at its source (a new comment,
 reply or edit). Decide whether this specific change needs the connected user's attention again,
@@ -23,21 +23,26 @@ const responseSchema = z.object({ relevant: z.boolean(), reason: z.string().opti
 
 /**
  * The lighter, type-aware check run before a task-threads reopen: the task
- * already has a type, so the only question is whether this delta warrants
- * another pass. Fails open — any unusable reply counts as relevant.
+ * already has a type, so the only question is whether the new items warrant
+ * another pass. The poller has already rebuilt the task's title and body to
+ * include them, so they are also listed on their own. Fails open — any
+ * unusable reply counts as relevant.
  */
 export async function assessReopenRelevance(
   provider: AiProvider,
   task: Task,
   type: TaskType,
-  item: LegacyRawItem,
+  newItems: SourceItem[],
   identity: string | null,
 ): Promise<{ relevant: boolean; reason?: string }> {
   const who = identity ? `The connected user's identity on this source: ${identity}\n\n` : "";
+  const messages = newItems
+    .map((item) => `occurred at: ${item.occurredAt}\ntitle: ${item.title}\nbody:\n${item.body}`)
+    .join("\n\n");
   const content =
     `${who}Task type: ${type.name} — ${type.description}\n\n` +
-    `Item as it was when last handled:\ntitle: ${task.title}\nbody:\n${task.body}\n\n` +
-    `Item as it is now:\ntitle: ${item.title}\nbody:\n${item.body}`;
+    `Item, including the new messages:\ntitle: ${task.title}\nbody:\n${task.body}\n\n` +
+    `New messages in this thread:\n${messages}`;
 
   try {
     const response = await completeJson(

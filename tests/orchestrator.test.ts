@@ -3,7 +3,8 @@ import { openDb, migrate } from "../src/db";
 import { insertTask, getTask, deleteTask, updateTask } from "../src/repo/tasks";
 import { insertTaskType, getTaskType, listTaskTypes, updateTaskType } from "../src/repo/taskTypes";
 import { insertRule, activateRule, getActiveRule } from "../src/repo/rules";
-import { wasMerged } from "../src/repo/mergedSourceItems";
+import { fileIngested, getItemRow } from "../src/repo/sourceItems";
+import type { SourceItem } from "../src/sources/types";
 import {
   onTaskIngested,
   onTaskChanged,
@@ -23,6 +24,7 @@ import {
   refreshPriorityForType,
   completeTask,
   reopenTask,
+  drainPendingChange,
   type AppDeps,
 } from "../src/orchestrator";
 import { insertHint } from "../src/repo/hints";
@@ -58,6 +60,11 @@ const sample = { sourceId: "outlook", externalId: "m1", title: "Where is my orde
 
 /** The reopen relevance check's reply that lets a reopen proceed. */
 const RELEVANT = JSON.stringify({ relevant: true });
+
+/** A new item on a task's thread, as the poller hands it to onTaskChanged. */
+function newItem(key: string, over: Partial<SourceItem> = {}): SourceItem {
+  return { key, occurredAt: "2026-01-02T00:00:00.000Z", title: "Re: Where is my order?", body: "Any news?", ...over };
+}
 
 test("an unmatched task creates a proposed type and waits for onboarding", async () => {
   const db = freshDb();
@@ -466,15 +473,18 @@ test("resolveDuplicate surfaces a clear error rather than crashing when the cand
   await expect(resolveDuplicate(app, task.id, true)).rejects.toThrow(/unknown task/);
 });
 
-test("mergeTasks tombstones the duplicate's source item so a re-listing poller never resurrects it", async () => {
+test("mergeTasks repoints the duplicate's source items to the target, so a later reply lands on the surviving task", () => {
   const db = freshDb();
   const target = insertTask(db, { ...sample, externalId: "m0" });
   const dup = insertTask(db, { ...sample, externalId: "m1" });
+  fileIngested(db, dup.sourceId, newItem("m1"), dup.id);
+  fileIngested(db, dup.sourceId, newItem("m1-reply", { threadKey: "m1" }), dup.id);
   const app = deps(db, []);
 
   mergeTasks(app, dup.id, target.id);
 
-  expect(wasMerged(db, dup.sourceId, dup.externalId)).toBe(true);
+  expect(getItemRow(db, dup.sourceId, "m1")?.taskId).toBe(target.id);
+  expect(getItemRow(db, dup.sourceId, "m1-reply")?.taskId).toBe(target.id);
 });
 
 test("mergeTasks refuses to merge into a target that is currently processing, to avoid losing the merge record", () => {
@@ -685,7 +695,7 @@ test("a matched task with an active rule stamps isFollowUp false on its first ru
   expect(result.context.isFollowUp).toBe("false");
 });
 
-test("onTaskChanged archives the current pass, stamps isFollowUp true and the new revision, and reruns the active rule", async () => {
+test("onTaskChanged archives the current pass, stamps isFollowUp true, and reruns the active rule", async () => {
   const db = freshDb();
   const type = insertTaskType(db, { name: "Code review", description: "d" });
   activateRule(
@@ -704,10 +714,9 @@ test("onTaskChanged archives the current pass, stamps isFollowUp true and the ne
     typeId: type.id,
     state: "done",
     assignee: "human",
-    title: "Old title",
-    body: "Old body",
+    title: "New title",
+    body: "New body",
     context: {
-      revision: "rev-1",
       isFollowUp: "false",
       review: "first pass review",
       completedAt: "2026-01-01T00:00:00.000Z",
@@ -720,16 +729,11 @@ test("onTaskChanged archives the current pass, stamps isFollowUp true and the ne
   });
   const app = deps(db, [RELEVANT, "pass=true"]);
 
-  const result = await onTaskChanged(app, initial, {
-    externalId: initial.externalId,
-    title: "New title",
-    body: "New body",
-    revision: "rev-2",
-  });
+  const result = await onTaskChanged(app, initial, [newItem("c-2", { body: "New body" })]);
 
   expect(result.title).toBe("New title");
   expect(result.body).toBe("New body");
-  expect(result.context.revision).toBe("rev-2");
+  expect(result.context.revision).toBeUndefined();
   expect(result.context.isFollowUp).toBe("true");
   expect(result.context.completedAt).toBeUndefined();
   expect(result.context.completionNote).toBeUndefined();
@@ -769,24 +773,14 @@ test("onTaskChanged archives passes in order across multiple reopens", async () 
     typeId: type.id,
     state: "done",
     assignee: "human",
-    context: { revision: "rev-1", review: "pass 1", ruleLog: [{ stepId: "s1", type: "ai", output: "review" }] },
+    context: { review: "pass 1", ruleLog: [{ stepId: "s1", type: "ai", output: "review" }] },
   });
   const app = deps(db, [RELEVANT, "pass 2", RELEVANT, "pass 3"]);
 
-  const afterFirstReopen = await onTaskChanged(app, initial, {
-    externalId: initial.externalId,
-    title: initial.title,
-    body: initial.body,
-    revision: "rev-2",
-  });
+  const afterFirstReopen = await onTaskChanged(app, initial, [newItem("c-2")]);
   const done = updateTask(db, afterFirstReopen.id, { state: "done" });
 
-  const afterSecondReopen = await onTaskChanged(app, done, {
-    externalId: done.externalId,
-    title: done.title,
-    body: done.body,
-    revision: "rev-3",
-  });
+  const afterSecondReopen = await onTaskChanged(app, done, [newItem("c-3")]);
 
   const thread = afterSecondReopen.context.thread as Array<Record<string, unknown>>;
   expect(thread).toHaveLength(2);
@@ -1430,7 +1424,7 @@ test("triage is told the connected user's identity for a task from an extension 
   expect(seen).toContain("octocat");
 });
 
-test("a reopen judged not relevant only refreshes the revision: no new pass, no rule run, state kept", async () => {
+test("a reopen judged not relevant leaves the task alone: no new pass, no rule run, state kept", async () => {
   const db = freshDb();
   const type = insertTaskType(db, { name: "Bug report", description: "d" });
   activateRule(
@@ -1444,39 +1438,32 @@ test("a reopen judged not relevant only refreshes the revision: no new pass, no 
     typeId: type.id,
     state: "assigned_human",
     assignee: "human",
-    context: { revision: "rev-1", ack: "first ack" },
+    context: { ack: "first ack" },
   });
   const app = deps(db, [JSON.stringify({ relevant: false, reason: "our own comment" }), "SHOULD NOT RUN"]);
 
-  const result = await onTaskChanged(app, initial, {
-    externalId: initial.externalId,
-    title: initial.title,
-    body: "bot: acknowledged",
-    revision: "rev-2",
-  });
+  const result = await onTaskChanged(app, initial, [newItem("c-2", { body: "bot: acknowledged" })]);
 
   expect(result.state).toBe("assigned_human");
-  expect(result.context.revision).toBe("rev-2");
   expect(result.context.thread).toBeUndefined();
   expect(result.context.ack).toBe("first ack");
-  expect(auditKinds(db, initial.id, "reopen_skipped")[0]?.data).toMatchObject({ revision: "rev-2", reason: "our own comment" });
+  expect(auditKinds(db, initial.id, "reopen_skipped")[0]?.data).toMatchObject({ keys: ["c-2"], reason: "our own comment" });
 });
 
 test("a dismissed task whose source item changes is re-triaged with the new content", async () => {
   const db = freshDb();
   const type = insertTaskType(db, { name: "Customer email", description: "d" });
-  const dismissed = updateTask(db, insertTask(db, sample).id, { state: "dismissed", context: { revision: "rev-1" } });
-  const app = deps(db, [JSON.stringify({ scores: [{ typeId: type.id, confidence: 0.95 }], proposal: null })]);
-
-  const result = await onTaskChanged(app, dismissed, {
-    externalId: dismissed.externalId,
+  // The poller has already rebuilt the task's content from its items.
+  const dismissed = updateTask(db, insertTask(db, sample).id, {
+    state: "dismissed",
     title: "Now addressed to you",
     body: "@you can you handle this?",
-    revision: "rev-2",
   });
+  const app = deps(db, [JSON.stringify({ scores: [{ typeId: type.id, confidence: 0.95 }], proposal: null })]);
+
+  const result = await onTaskChanged(app, dismissed, [newItem("c-2", { body: "@you can you handle this?" })]);
 
   expect(result.body).toBe("@you can you handle this?");
-  expect(result.context.revision).toBe("rev-2");
   expect(result.typeId).toBe(type.id);
   expect(result.state).toBe("needs_onboarding");
 });
@@ -1490,4 +1477,169 @@ test("mergeTasks keeps the duplicate's participants on the surviving task", () =
   mergeTasks(deps(db, []), dup.id, target.id);
 
   expect(listParticipants(db, target.id).map((p) => p.identity)).toEqual(["email:bob@acme.test"]);
+});
+
+/** A provider that answers each call with the next handler's reply, counting calls. */
+function scripted(handlers: Array<(prompt: string) => Promise<string> | string>): AiProvider & { prompts: string[] } {
+  const prompts: string[] = [];
+  return {
+    id: "stub",
+    prompts,
+    async complete(req) {
+      const prompt = JSON.stringify(req.messages);
+      prompts.push(prompt);
+      const handler = handlers[prompts.length - 1];
+      if (!handler) throw new Error(`unexpected provider call #${prompts.length}`);
+      return { text: await handler(prompt), toolCalls: [] };
+    },
+  };
+}
+
+function typeWithRule(db: ReturnType<typeof freshDb>) {
+  const type = insertTaskType(db, { name: "Customer email", description: "d" });
+  activateRule(
+    db,
+    insertRule(db, {
+      typeId: type.id,
+      definition: {
+        steps: [
+          { id: "s1", type: "ai", prompt: "Summarize {{task.body}}", output: "summary" },
+          { id: "s2", type: "assign", to: "human" },
+        ],
+      },
+    }).id,
+  );
+  return type;
+}
+
+for (const state of ["processing", "ingested", "needs_type_confirmation", "needs_onboarding", "needs_dedup_confirmation"] as const) {
+  test(`onTaskChanged on a task in ${state} only records the new keys as a pending change`, async () => {
+    const db = freshDb();
+    const task = updateTask(db, insertTask(db, sample).id, { state, context: { pendingChange: ["c-1"] } });
+    const provider = scripted([]);
+
+    const result = await onTaskChanged({ ...deps(db, []), provider }, task, [newItem("c-1"), newItem("c-2")]);
+
+    expect(provider.prompts).toHaveLength(0);
+    expect(result.state).toBe(state);
+    expect(result.context.pendingChange).toEqual(["c-1", "c-2"]);
+    expect(getTask(db, task.id)?.context.pendingChange).toEqual(["c-1", "c-2"]);
+  });
+}
+
+test("a reply that arrives mid-run is followed up once after the run lands, and the flag is cleared", async () => {
+  const db = freshDb();
+  const type = typeWithRule(db);
+  const task = updateTask(db, insertTask(db, sample).id, { typeId: type.id, state: "needs_onboarding" });
+  const reply = newItem("c-2", { body: "Actually it arrived damaged" });
+  fileIngested(db, task.sourceId, reply, task.id);
+  const app: AppDeps = { ...deps(db, []) };
+  app.provider = scripted([
+    async () => {
+      // The poller sees the reply while the rule is still running.
+      await onTaskChanged(app, getTask(db, task.id)!, [reply]);
+      return "pass 1";
+    },
+    () => RELEVANT,
+    () => "pass 2",
+  ]);
+
+  const result = await runRuleForTask(app, task);
+
+  const prompts = (app.provider as ReturnType<typeof scripted>).prompts;
+  expect(prompts).toHaveLength(3);
+  expect(prompts[1]).toContain("Actually it arrived damaged");
+  expect(result.state).toBe("assigned_human");
+  expect(result.context.summary).toBe("pass 2");
+  expect(result.context.pendingChange).toBeUndefined();
+  expect(getTask(db, task.id)?.context.pendingChange).toBeUndefined();
+  const thread = result.context.thread as Array<Record<string, unknown>>;
+  expect(thread).toHaveLength(1);
+  expect(thread[0]?.outputs).toEqual({ summary: "pass 1" });
+});
+
+test("a pending change survives a failed run, and drains once the task is completed", async () => {
+  const db = freshDb();
+  const type = typeWithRule(db);
+  const task = updateTask(db, insertTask(db, sample).id, { typeId: type.id, state: "needs_onboarding" });
+  const reply = newItem("c-2", { body: "Still waiting" });
+  fileIngested(db, task.sourceId, reply, task.id);
+  const app: AppDeps = { ...deps(db, []) };
+  app.provider = scripted([
+    async () => {
+      await onTaskChanged(app, getTask(db, task.id)!, [reply]);
+      throw new Error("model unavailable");
+    },
+    () => RELEVANT,
+    () => "pass 2",
+  ]);
+
+  const failed = await runRuleForTask(app, task);
+
+  const prompts = (app.provider as ReturnType<typeof scripted>).prompts;
+  expect(failed.state).toBe("failed");
+  expect(failed.context.pendingChange).toEqual(["c-2"]);
+  expect(prompts).toHaveLength(1);
+
+  const done = completeTask(app, task.id);
+  expect(done.context.pendingChange).toEqual(["c-2"]);
+  const result = await drainPendingChange(app, done);
+
+  expect(prompts).toHaveLength(3);
+  expect(prompts[1]).toContain("Still waiting");
+  expect(result.state).toBe("assigned_human");
+  expect(result.context.pendingChange).toBeUndefined();
+});
+
+test("drainPendingChange leaves a busy task alone, and a task without a pending change untouched", async () => {
+  const db = freshDb();
+  const busy = updateTask(db, insertTask(db, sample).id, { state: "processing", context: { pendingChange: ["c-2"] } });
+  const idle = updateTask(db, insertTask(db, { ...sample, externalId: "m2" }).id, { state: "assigned_human" });
+  const provider = scripted([]);
+  const app = { ...deps(db, []), provider };
+
+  expect((await drainPendingChange(app, busy)).context.pendingChange).toEqual(["c-2"]);
+  expect(await drainPendingChange(app, idle)).toEqual(idle);
+  expect(provider.prompts).toHaveLength(0);
+});
+
+test("skipping onboarding drains a change that arrived while the task waited", async () => {
+  const db = freshDb();
+  const type = insertTaskType(db, { name: "Customer email", description: "d" });
+  const task = updateTask(db, insertTask(db, sample).id, {
+    typeId: type.id,
+    state: "needs_onboarding",
+    context: { pendingChange: ["c-2"] },
+  });
+  fileIngested(db, task.sourceId, newItem("c-2", { body: "thanks!" }), task.id);
+  const provider = scripted([() => JSON.stringify({ relevant: false, reason: "just thanks" })]);
+
+  const result = await skipOnboarding({ ...deps(db, []), provider }, task.id);
+
+  expect(provider.prompts[0]).toContain("thanks!");
+  expect(result.state).toBe("assigned_human");
+  expect(result.context.pendingChange).toBeUndefined();
+  expect(auditKinds(db, task.id, "reopen_skipped")).toHaveLength(1);
+});
+
+test("a task dismissed by triage re-triages for a change that arrived during triage", async () => {
+  const db = freshDb();
+  const type = insertTaskType(db, { name: "Customer email", description: "d" });
+  const task = insertTask(db, sample);
+  fileIngested(db, task.sourceId, newItem("c-2", { body: "@you please handle" }), task.id);
+  const app: AppDeps = { ...deps(db, []) };
+  app.provider = scripted([
+    async () => {
+      await onTaskChanged(app, getTask(db, task.id)!, [newItem("c-2")]);
+      return JSON.stringify({ scores: [], proposal: null, notRelevant: true });
+    },
+    () => JSON.stringify({ scores: [{ typeId: type.id, confidence: 0.95 }], proposal: null }),
+  ]);
+
+  const result = await onTaskIngested(app, task);
+
+  expect((app.provider as ReturnType<typeof scripted>).prompts).toHaveLength(2);
+  expect(result.typeId).toBe(type.id);
+  expect(result.state).toBe("needs_onboarding");
+  expect(result.context.pendingChange).toBeUndefined();
 });

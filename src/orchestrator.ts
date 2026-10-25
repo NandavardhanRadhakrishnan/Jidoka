@@ -6,7 +6,7 @@ import type { Assignee, Task, TaskState } from "./domain/task";
 import type { Rule } from "./domain/rule";
 import { resolvePriority, type Priority } from "./domain/priority";
 import { getTask, listTasks, updateTask, deleteTask } from "./repo/tasks";
-import { recordMergedSourceItem } from "./repo/mergedSourceItems";
+import { getItemRow, repointTask } from "./repo/sourceItems";
 import { moveParticipants } from "./repo/participants";
 import { recordAudit } from "./repo/audit";
 import { getResolvedIdentity } from "./repo/extensions";
@@ -38,7 +38,7 @@ import { findDependentSteps } from "./rule/dependents";
 import { createInProcessRunner, type AgentRunner } from "./agent/runner";
 import { buildRule } from "./rule/builder";
 import { listHintsForRule, listHintsForStep } from "./repo/hints";
-import type { LegacyRawItem } from "./sources/types";
+import type { SourceItem } from "./sources/types";
 
 export interface AppDeps {
   db: Database;
@@ -69,6 +69,33 @@ function ruleLogFromContext(context: Record<string, unknown>): StepLogEntry[] {
   return (context.ruleLog as StepLogEntry[] | undefined) ?? [];
 }
 
+function pendingKeys(context: Record<string, unknown>): string[] {
+  const value = context.pendingChange;
+  return Array.isArray(value) ? value.filter((k): k is string => typeof k === "string") : [];
+}
+
+/** A change can be recorded in `context.pendingChange` while a caller is
+ *  holding an older snapshot of the task (across a triage call or a rule
+ *  run). Whole-context writes made from that snapshot go through here, so the
+ *  stored flag is carried forward instead of being overwritten. */
+function carryPendingChange(deps: AppDeps, taskId: string, context: Record<string, unknown>): Record<string, unknown> {
+  const { pendingChange: _snapshot, ...rest } = context;
+  const stored = getTask(deps.db, taskId);
+  const keys = stored ? pendingKeys(stored.context) : [];
+  return keys.length ? { ...rest, pendingChange: keys } : rest;
+}
+
+/** `drainPendingChange` for callers that must not fail because a deferred
+ *  follow-up did: the caller's own state change has already been saved. */
+async function drainQuietly(deps: AppDeps, task: Task): Promise<Task> {
+  try {
+    return await drainPendingChange(deps, task);
+  } catch (error) {
+    console.error(`[orchestrator] pending change for task ${task.id} failed:`, error);
+    return getTask(deps.db, task.id) ?? task;
+  }
+}
+
 export async function onTaskIngested(deps: AppDeps, task: Task): Promise<Task> {
   const candidates = listTasks(deps.db)
     .filter((t) => t.id !== task.id && !["done", "failed", "dismissed", "needs_dedup_confirmation"].includes(t.state))
@@ -79,7 +106,7 @@ export async function onTaskIngested(deps: AppDeps, task: Task): Promise<Task> {
     return updateTask(deps.db, task.id, {
       state: "needs_dedup_confirmation",
       dedupCandidateId: match.taskId,
-      context: { ...task.context, dedupRationale: match.rationale },
+      context: { ...carryPendingChange(deps, task.id, task.context), dedupRationale: match.rationale },
     });
   }
 
@@ -108,12 +135,13 @@ function auditTriage(deps: AppDeps, task: Task, result: TriageResult, extra: Rec
 
 async function applyTriageOutcome(deps: AppDeps, task: Task, result: TriageResult): Promise<Task> {
   const { outcome, deadline } = result;
-  const context = withUrgency(task.context, result.urgency);
+  const context = withUrgency(carryPendingChange(deps, task.id, task.context), result.urgency);
 
   if (outcome.kind === "not_relevant") {
     const dismissed = updateTask(deps.db, task.id, { state: "dismissed", typeCandidates: null, deadline, context });
     auditTriage(deps, dismissed, result);
-    return dismissed;
+    // A reply that came in during triage may be what makes it relevant.
+    return drainQuietly(deps, dismissed);
   }
 
   if (outcome.kind === "ambiguous") {
@@ -275,7 +303,7 @@ export async function runRuleForTask(
 
   const running = updateTask(deps.db, task.id, {
     state: "processing",
-    context: { isFollowUp: "false", ...task.context },
+    context: { isFollowUp: "false", ...carryPendingChange(deps, task.id, task.context) },
   });
 
   try {
@@ -283,7 +311,7 @@ export async function runRuleForTask(
 
     const updated = updateTask(deps.db, task.id, {
       context: {
-        ...result.context,
+        ...carryPendingChange(deps, task.id, result.context),
         ruleLog: result.log,
         ...(result.handoff ? { handoff: result.handoff } : {}),
       },
@@ -313,7 +341,9 @@ export async function runRuleForTask(
       });
     }
 
-    return updated;
+    // A change that arrived while the rule ran is followed up now that the
+    // task has landed somewhere it can be reopened from.
+    return await drainQuietly(deps, updated);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     recordAudit(deps.db, {
@@ -324,9 +354,11 @@ export async function runRuleForTask(
       ruleId: active.id,
       data: { version: active.version, error: message },
     });
+    // The pending change stays set: `failed` isn't a state the change flow
+    // runs from, so `drainPendingChange` picks it up once the task moves on.
     return updateTask(deps.db, task.id, {
       state: "failed",
-      context: { ...running.context, error: message },
+      context: { ...carryPendingChange(deps, task.id, running.context), error: message },
     });
   }
 }
@@ -364,8 +396,9 @@ async function completeAiAssignedTask(
     // to something else in the meantime (a human closed it by hand, a merge,
     // a reopen from the source), this background write must not clobber that
     // — the same hazard mergeTasks already guards against for a concurrent
-    // rule run.
-    if (!current || current.state !== "assigned_ai") return;
+    // rule run. A reopen that re-ran the rule and landed back in `assigned_ai`
+    // is a newer pass with its own completion, so this one stands down too.
+    if (!current || current.state !== "assigned_ai" || !samePass(current, task)) return;
     recordAudit(deps.db, {
       kind: "completed",
       actor: "ai",
@@ -384,7 +417,7 @@ async function completeAiAssignedTask(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const current = getTask(deps.db, task.id);
-    if (!current || current.state !== "assigned_ai") return;
+    if (!current || current.state !== "assigned_ai" || !samePass(current, task)) return;
     updateTask(deps.db, task.id, {
       state: "failed",
       context: { ...current.context, error: message },
@@ -583,49 +616,67 @@ function asThreadArray(value: unknown): ThreadPass[] {
   return Array.isArray(value) ? (value as ThreadPass[]) : [];
 }
 
-/** A source reports a revision change on a task that already passed through
- *  a rule at least once (done, or currently assigned): archive the pass that
- *  just closed and run the current active rule again over the refreshed
- *  content, so a rule's `agent` steps can resume their prior session and ask
- *  a follow-up instead of starting cold. */
-export async function onTaskChanged(deps: AppDeps, task: Task, item: LegacyRawItem): Promise<Task> {
+/** Whether two snapshots of a task are from the same rule pass: every reopen
+ *  archives the pass it closes into `context.thread`. */
+function samePass(a: Task, b: Task): boolean {
+  return asThreadArray(a.context.thread).length === asThreadArray(b.context.thread).length;
+}
+
+/** States where a change can't be followed up yet: a rule is running, or the
+ *  task hasn't been through triage and a rule. The change waits in
+ *  `context.pendingChange` until `drainPendingChange` picks it up. */
+const DEFER_CHANGE_STATES = new Set<TaskState>([
+  "processing",
+  "ingested",
+  "needs_type_confirmation",
+  "needs_onboarding",
+  "needs_dedup_confirmation",
+]);
+
+/** States the change flow runs from. */
+const REOPENABLE_STATES = new Set<TaskState>(["done", "assigned_ai", "assigned_human", "dismissed"]);
+
+/** New items joined a task's thread, or a known item changed. The poller has
+ *  already rebuilt the task's title, body, url and metadata from its items;
+ *  this only decides what follows. A task that already passed through a rule
+ *  (done, or currently assigned) gets its closed pass archived and the
+ *  current active rule run again, so a rule's `agent` steps can resume their
+ *  prior session and ask a follow-up instead of starting cold. */
+export async function onTaskChanged(deps: AppDeps, task: Task, newItems: SourceItem[]): Promise<Task> {
+  // Decide on the stored row, not the caller's snapshot: the task may have
+  // moved on (or gained a pending change) since the snapshot was taken.
+  task = getTask(deps.db, task.id) ?? task;
+  if (DEFER_CHANGE_STATES.has(task.state)) {
+    const keys = [...new Set([...pendingKeys(task.context), ...newItems.map((item) => item.key)])];
+    return updateTask(deps.db, task.id, { context: { ...task.context, pendingChange: keys } });
+  }
+
   // A dismissed item gets a fresh full triage on the new content — what was
   // side-chatter may now be addressed to the user. Triage's own relevance
   // judgment decides; the user's own activity is simply dismissed again.
-  if (task.state === "dismissed") {
-    const refreshed = updateTask(deps.db, task.id, {
-      title: item.title,
-      body: item.body,
-      metadata: item.metadata ?? {},
-      context: { ...task.context, revision: item.revision },
-    });
-    return triageAndAssign(deps, refreshed);
-  }
+  if (task.state === "dismissed") return triageAndAssign(deps, task);
 
   const identity = getResolvedIdentity(deps.db, task.sourceId);
   const type = task.typeId ? getTaskType(deps.db, task.typeId) : null;
   if (type) {
-    const verdict = await assessReopenRelevance(deps.provider, task, type, item, identity);
+    const verdict = await assessReopenRelevance(deps.provider, task, type, newItems, identity);
     if (!verdict.relevant) {
-      // Refresh the revision so the next poll doesn't keep flagging the same
-      // change, but leave state and content alone — this is what stops a
+      // State and the rule's outputs stay as they are — this is what stops a
       // rule's own write-back from reopening the task in a loop.
       recordAudit(deps.db, {
         kind: "reopen_skipped",
         actor: "system",
         taskId: task.id,
         typeId: task.typeId,
-        data: { revision: item.revision ?? null, reason: verdict.reason ?? null },
+        data: { keys: newItems.map((item) => item.key), reason: verdict.reason ?? null },
       });
-      return updateTask(deps.db, task.id, { context: { ...task.context, revision: item.revision } });
+      return task;
     }
   }
 
-  if (!task.typeId) {
-    // Every REOPENABLE_STATES entry implies a type was assigned — defensive
-    // only, not a real path.
-    return updateTask(deps.db, task.id, { context: { ...task.context, revision: item.revision } });
-  }
+  // Every reopenable state but `dismissed` implies a type was assigned —
+  // defensive only, not a real path.
+  if (!task.typeId) return task;
 
   const pass: ThreadPass = {
     outputs: Object.fromEntries(
@@ -644,14 +695,10 @@ export async function onTaskChanged(deps: AppDeps, task: Task, item: LegacyRawIt
   const { completedAt: _completedAt, completionNote: _note, ...restContext } = task.context;
 
   const reopened = updateTask(deps.db, task.id, {
-    title: item.title,
-    body: item.body,
-    metadata: item.metadata ?? {},
     state: "processing",
     assignee: null,
     context: {
       ...restContext,
-      revision: item.revision,
       isFollowUp: "true",
       thread: [...asThreadArray(task.context.thread), pass],
     },
@@ -660,11 +707,43 @@ export async function onTaskChanged(deps: AppDeps, task: Task, item: LegacyRawIt
   return runRuleForTask(deps, reopened);
 }
 
+/** Runs the change flow once for a change that was deferred while the task
+ *  was busy, now that it sits in a state the flow runs from. A no-op
+ *  otherwise. Keys with no item row left are skipped. */
+export async function drainPendingChange(deps: AppDeps, task: Task): Promise<Task> {
+  const current = getTask(deps.db, task.id);
+  if (!current) return task;
+  const keys = pendingKeys(current.context);
+  if (!keys.length || !REOPENABLE_STATES.has(current.state)) return current;
+
+  const { pendingChange: _pending, ...context } = current.context;
+  const cleared = updateTask(deps.db, current.id, { context });
+  const newItems: SourceItem[] = [];
+  for (const key of keys) {
+    const row = getItemRow(deps.db, current.sourceId, key);
+    if (!row) continue;
+    newItems.push({
+      key: row.key,
+      ...(row.threadKey ? { threadKey: row.threadKey } : {}),
+      ...(row.version ? { version: row.version } : {}),
+      occurredAt: row.occurredAt ?? row.firstSeenAt,
+      title: row.title ?? "",
+      body: row.body ?? "",
+      ...(row.url ? { url: row.url } : {}),
+      metadata: row.metadata,
+      participants: row.participants,
+    });
+  }
+  if (!newItems.length) return cleared;
+  return onTaskChanged(deps, cleared, newItems);
+}
+
 export async function skipOnboarding(deps: AppDeps, taskId: string): Promise<Task> {
   const task = getTask(deps.db, taskId);
   if (!task) throw new Error(`skipOnboarding: unknown task ${taskId}`);
   recordAudit(deps.db, { kind: "onboarding_skipped", actor: "human", taskId, typeId: task.typeId, data: {} });
-  return updateTask(deps.db, taskId, { state: "assigned_human", assignee: "human" });
+  const skipped = updateTask(deps.db, taskId, { state: "assigned_human", assignee: "human" });
+  return drainQuietly(deps, skipped);
 }
 
 interface MergedFromRecord {
@@ -707,11 +786,6 @@ export function mergeTasks(deps: AppDeps, duplicateTaskId: string, intoTaskId: s
   const updated = updateTask(deps.db, target.id, {
     context: { ...target.context, mergedFrom: [...asMergedFromArray(target.context.mergedFrom), record] },
   });
-  // Tombstone the source item, not just the task row: a re-listing source
-  // (one that returns the same items every poll regardless of cursor, like
-  // the bundled sample folder source) would otherwise rediscover it on the
-  // next tick and re-ingest it as a brand-new task, undoing the merge.
-  recordMergedSourceItem(deps.db, duplicate.sourceId, duplicate.externalId);
   // One entry on each side, so the trail is findable from either task — the
   // duplicate's own entry outlives its row (audit_log has no foreign keys).
   recordAudit(deps.db, {
@@ -730,6 +804,10 @@ export function mergeTasks(deps: AppDeps, duplicateTaskId: string, intoTaskId: s
   });
   // Deleting the duplicate cascades its participants away; keep them on the target.
   moveParticipants(deps.db, duplicate.id, target.id);
+  // The item record is the routing truth: repointed rows keep a re-listed
+  // item from coming back as a new task, and send a later reply on the
+  // merged-away conversation to the surviving one.
+  repointTask(deps.db, duplicate.id, target.id);
   deleteTask(deps.db, duplicate.id);
   return updated;
 }
