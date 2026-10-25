@@ -25,8 +25,8 @@ const validManifest = JSON.stringify({
 
 const validSource = `export function createSource(deps) {
   return {
-    async poll(cursor) {
-      return { items: [], cursor };
+    async list({ since }) {
+      return { items: [], failures: [] };
     },
   };
 }`;
@@ -133,4 +133,34 @@ test("the generator prompt teaches participants and namespaced identities", () =
   expect(SYSTEM_PROMPT).toContain('"participants"');
   expect(SYSTEM_PROMPT).toContain('"github:octocat"');
   expect(SYSTEM_PROMPT).toContain('"email:you@example.com"');
+});
+
+test("the generator prompt teaches the list({ since }) contract and its key rules", () => {
+  expect(SYSTEM_PROMPT).toContain("list({ since })");
+  expect(SYSTEM_PROMPT).toContain("threadKey");
+  expect(SYSTEM_PROMPT).toContain("never use IMAP UIDs");
+  expect(SYSTEM_PROMPT).toContain("never invent a fallback key");
+  expect(SYSTEM_PROMPT).toContain("failures");
+  expect(SYSTEM_PROMPT).not.toContain("poll(cursor)");
+});
+
+test("the generator prompt carries the key table from the spec", () => {
+  for (const source of ["Gmail API", "X-GM-MSGID", "internetMessageId", "conversationId", "Message-ID", "thread_ts", "Ledgers"]) {
+    expect(SYSTEM_PROMPT).toContain(source);
+  }
+});
+
+test("the shape check rejects a draft whose createSource returns only poll()", async () => {
+  const pollOnly = `export function createSource() {
+  return { async poll(cursor) { return { items: [], cursor }; } };
+}`;
+  const runner = scripted([fenced(validManifest, pollOnly), fenced(validManifest, validSource)]);
+
+  const result = await generateExtension(runner, { kind: "create", description: "d" }, []);
+
+  expect(result.source).toContain("list(");
+  expect(runner.calls).toHaveLength(2);
+  expect(runner.calls[1]?.prompt).toContain(
+    "createSource(deps) must return an object with a list({ since }) function",
+  );
 });

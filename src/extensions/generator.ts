@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { AgentRunner } from "../agent/runner";
 import { ExtensionManifestSchema, type ExtensionManifest } from "../domain/extension";
-import type { ExtensionSourceDeps, LegacyTaskSource } from "../sources/types";
+import type { ExtensionSourceDeps, TaskSource } from "../sources/types";
 
 export interface GenerateInput {
   kind: "create";
@@ -24,7 +24,7 @@ export interface GeneratedExtension {
   source: string;
 }
 
-export const SYSTEM_PROMPT = `You write Jidoka extensions: a manifest.json describing an integration and a source.ts that polls it.
+export const SYSTEM_PROMPT = `You write Jidoka extensions: a manifest.json describing an integration and a source.ts that lists its items.
 
 Reply with exactly two fenced code blocks, in this order:
 
@@ -35,8 +35,15 @@ Reply with exactly two fenced code blocks, in this order:
 \`\`\`typescript
 export function createSource(deps) {
   return {
-    async poll(cursor) {
-      // return { items: [...], cursor: "..." }
+    async list({ since }) {
+      const token = await deps.getToken();
+      const items = [];
+      const failures = [];
+      // Fetch every item that changed at or after since (everything when since is null).
+      // For each record the API returns:
+      //   if it can't be built (no readable id, a missing field): failures.push({ key, error }) and move on
+      //   otherwise: items.push({ key, threadKey, occurredAt, title, body, url, participants })
+      return { items, failures };
     },
   };
 }
@@ -53,12 +60,34 @@ Manifest rules:
   Pick whichever the target API actually supports, using real values from its real documentation. If the target has no public OAuth client id, prefer "api-key" instead of inventing one.
 
 source.ts rules:
-- Export createSource(deps) -> { poll(cursor) }. Do not add TypeScript type annotations or import anything from Jidoka's own source tree — nothing resolves that path at runtime; write plain, untyped JavaScript-shaped code.
-- "deps.getToken()" returns a Promise<string> — the current valid token or API key. Call it inside poll(), never store it.
-- "poll(cursor)" takes the last cursor (a string, or null on the first call) and must return { items: RawItem[], cursor: string | null }.
-- Each RawItem is { externalId: string, title: string, body: string, url?: string, metadata?: Record<string, unknown>, participants?: { identity: string, name?: string, role: "from" | "to" | "cc" | "author" | "assignee" | "commenter" }[] }. "externalId" must be stable and unique per item — it is used to avoid re-ingesting the same item twice.
+- Export createSource(deps) -> { list({ since }) }. Do not add TypeScript type annotations or import anything from Jidoka's own source tree — nothing resolves that path at runtime; write plain, untyped JavaScript-shaped code.
+- "deps.getToken()" returns a Promise<string> — the current valid token or API key. Call it inside list(), never store it.
+- "list({ since })" receives "since", an ISO-8601 timestamp string or null, and must return { items: SourceItem[], failures: { key?: string, error: string }[] }.
+- Each SourceItem is { key: string, threadKey?: string, version?: string, occurredAt: string, title: string, body: string, url?: string, metadata?: Record<string, unknown>, participants?: { identity: string, name?: string, role: "from" | "to" | "cc" | "author" | "assignee" | "commenter" }[] }:
+  - "key": the item's own immutable id, taken from the item itself (a Message-ID, a Gmail message id, an issue comment id). At most 512 characters.
+  - "threadKey": items with the same threadKey become one task (an email conversation, an issue and its comments). Omit it and the item is a task on its own.
+  - "version": changes when the item's content changes (an updated_at, an etag). Omit it for items that never change, like an email.
+  - "occurredAt": when the item happened, ISO-8601. It orders the items within a thread.
+  - "title": non-empty. "body": the item's text. "url": a link to the item, when there is one.
 - When items have people on them (sender, recipients, author, assignees, commenters), return them in "participants" with a role. Write each identity as namespace:value — "email:" for email addresses, the system's own name for logins and user ids (e.g. "github:octocat", "slack:U123ABC"). Prefer a stable identifier (address, login, user id) over a display name, and put the display name in "name".
-- Use "cursor" to avoid re-fetching items already seen; do not keep in-memory state across calls — poll() may run in a fresh process.
+- An extension promises exactly three things; Jidoka does everything else (remembering what it has seen, skipping duplicates, grouping items into tasks, noticing changes):
+  1. Stable keys: a key is immutable and comes from the item itself, so the same item gets the same key on every call.
+  2. Self-contained thread keys: a threadKey is computable from that one item alone, with no lookup across other items, so items can arrive in any order and still group correctly.
+  3. A complete window: return at least every item that changed at or after "since". Returning more is fine — a superset is harmless, because Jidoka skips keys it already has. "since" null means everything you have.
+- Where common sources get their keys (item key; threadKey; what to avoid):
+  - Gmail API: message "id"; "threadId".
+  - Gmail over IMAP: X-GM-MSGID; X-GM-THRID; avoid IMAP UIDs (they are per folder and reset).
+  - Microsoft Graph: "internetMessageId", or immutable ids; "conversationId"; avoid the default "id" (it changes when a message moves folder).
+  - Plain IMAP: the Message-ID header; the first id in References, else In-Reply-To, else the item's own Message-ID; avoid IMAP UIDs, and for a missing Message-ID do not substitute a hash of sender, date and subject.
+  - Slack: channel + "ts"; "thread_ts".
+  - Teams: message "id"; the parent message id.
+  - GitHub / Jira / Zendesk: the comment id, or the issue/ticket id; the issue/ticket.
+  - WhatsApp / SMS: the provider's message id; the contact / phone pair.
+  - Ledgers (Xero, QuickBooks): the invoice id; no threadKey; use the last-updated time as "version".
+- never use IMAP UIDs or mailbox positions as keys. They change when mail moves or a mailbox is rebuilt, and the same email would come back as a new task.
+- never invent a fallback key. When an item's id can't be read, don't build one from other fields; report the item in "failures".
+- Report items you couldn't build in "failures", never drop them: { key, error } when you know the key, { error } alone when you don't. Jidoka shows every failure to the user, who can retry it once the extension is fixed.
+- Keep no cursor; filter by "since". Hold no state across calls and do no paging between calls — list() may run in a fresh process. Page through the API inside one call if you need to, and return the whole window.
 - When the target system has an obvious "who am I" endpoint reachable with the same credential (GitHub's GET /user, Microsoft Graph's GET /me, Slack's auth.test), also export \`async function getIdentity(deps)\` — same deps — returning the connected user's identity on that system, namespaced the same way as participants ("github:octocat", "email:you@example.com"). Jidoka uses it to recognise the user's own activity, so their own comments never come back to them as new work. If there is no such endpoint, omit it.`;
 
 function userMessage(input: GenerateInput | FixInput, feedback?: string): string {
@@ -97,14 +126,14 @@ async function checkSourceShape(source: string): Promise<string | null> {
   await writeFile(path, source);
   try {
     const mod = (await import(pathToFileURL(path).href)) as {
-      createSource?: (deps: ExtensionSourceDeps) => LegacyTaskSource;
+      createSource?: (deps: ExtensionSourceDeps) => Partial<TaskSource> | null | undefined;
     };
     if (typeof mod.createSource !== "function") {
       return "source.ts must export a function named createSource";
     }
     const created = mod.createSource({ getToken: async () => "stub-token" });
-    if (!created || typeof created.poll !== "function") {
-      return "createSource(deps) must return an object with a poll(cursor) function";
+    if (!created || typeof created.list !== "function") {
+      return "createSource(deps) must return an object with a list({ since }) function";
     }
     return null;
   } catch (error) {

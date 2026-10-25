@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import type { Database } from "bun:sqlite";
 import * as extensionsRepo from "../repo/extensions";
 import type { Vault } from "../vault/vault";
-import type { ExtensionSourceDeps, LegacyTaskSource } from "../sources/types";
+import type { ExtensionSourceDeps, TaskSource } from "../sources/types";
 
 // Bun caches ES modules by their resolved import path for the lifetime of the
 // process. If we always imported extensionsDir/<id>/source.ts, then once an
@@ -40,18 +40,21 @@ export async function loadOneExtensionSource(
   extensionsDir: string,
   vault: Vault,
   id: string,
-): Promise<LegacyTaskSource> {
+): Promise<TaskSource> {
   const record = extensionsRepo.get(db, id);
   if (!record) throw new Error(`unknown extension: ${id}`);
   const modulePath = await resolveCacheBustedModulePath(extensionsDir, id);
   const mod = (await import(modulePath)) as {
-    createSource?: (deps: ExtensionSourceDeps) => LegacyTaskSource;
+    createSource?: (deps: ExtensionSourceDeps) => Partial<TaskSource> | null | undefined;
   };
   if (typeof mod.createSource !== "function") {
     throw new Error(`${id}: source.ts does not export createSource()`);
   }
   const source = mod.createSource({ getToken: () => vault.getToken(id) });
-  return { id: record.id, poll: source.poll.bind(source) };
+  if (!source || typeof source.list !== "function") {
+    throw new Error(`${id}: createSource() must return an object with a list({ since }) function`);
+  }
+  return { id: record.id, list: source.list.bind(source) };
 }
 
 /**
@@ -84,10 +87,10 @@ export async function loadEnabledExtensionSources(
   db: Database,
   extensionsDir: string,
   vault: Vault,
-): Promise<LegacyTaskSource[]> {
+): Promise<TaskSource[]> {
   const records = extensionsRepo.list(db).filter((record) => record.enabled && record.valid);
 
-  const sources: LegacyTaskSource[] = [];
+  const sources: TaskSource[] = [];
   for (const record of records) {
     try {
       sources.push(await loadOneExtensionSource(db, extensionsDir, vault, record.id));

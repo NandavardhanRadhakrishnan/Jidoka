@@ -108,13 +108,14 @@ export async function pollOnce(
   return created;
 }
 
+/** Polls every source once per interval through `pollSource`, one source at a
+ *  time. A tick never overlaps the previous one. */
 export function startPoller(
   db: Database,
-  sources: LegacyTaskSource[],
-  onTask: OnTask,
+  sources: TaskSource[],
+  hooks: PollHooks,
   intervalMs: number,
-  loadDynamicSources?: () => Promise<LegacyTaskSource[]>,
-  onTaskChanged?: OnTaskChanged,
+  loadDynamicSources?: () => Promise<TaskSource[]>,
 ): { stop(): void } {
   let running = false;
 
@@ -126,7 +127,7 @@ export function startPoller(
     running = true;
 
     try {
-      let dynamicSources: LegacyTaskSource[] = [];
+      let dynamicSources: TaskSource[] = [];
       if (loadDynamicSources) {
         try {
           dynamicSources = await loadDynamicSources();
@@ -148,7 +149,7 @@ export function startPoller(
 
       for (const source of [...sources, ...uniqueDynamicSources]) {
         try {
-          await pollOnce(db, source, onTask, onTaskChanged);
+          await pollSource(db, source, hooks);
         } catch (error) {
           console.error(`[poller] ${source.id} failed:`, error);
         }

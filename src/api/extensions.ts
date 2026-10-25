@@ -309,7 +309,7 @@ export function createExtensionRoutes(deps: ExtensionRoutesDeps): Hono {
     }
     try {
       const source = await loadOneExtensionSource(deps.db, deps.extensionsDir, deps.vault, id);
-      const result = await source.poll(null);
+      const result = await source.list({ since: null });
       return c.json({ itemCount: result.items.length, sample: result.items.slice(0, 3) });
     } catch (error) {
       return c.json({ error: errorMessage(error) }, 400);

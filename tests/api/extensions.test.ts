@@ -404,8 +404,8 @@ const demoManifest = {
 
 const demoSource = `export function createSource(deps) {
   return {
-    async poll(cursor) {
-      return { items: [], cursor };
+    async list({ since }) {
+      return { items: [], failures: [] };
     },
   };
 }`;
@@ -597,7 +597,7 @@ test("discard removes the staged draft and a later approve 404s", async () => {
   expect(approveAfterDiscard.status).toBe(404);
 });
 
-test("test-poll runs poll() for real without creating tasks or storing a cursor", async () => {
+test("test-poll runs list({ since: null }) for real without creating tasks or storing a cursor", async () => {
   const { fetch, dir, db } = await setup();
   await writeManifest(dir, "notion", apiKeyManifest);
   await mkdir(join(dir, "notion"), { recursive: true });
@@ -605,9 +605,9 @@ test("test-poll runs poll() for real without creating tasks or storing a cursor"
     join(dir, "notion", "source.ts"),
     `export function createSource(deps) {
       return {
-        async poll(cursor) {
+        async list({ since }) {
           const token = await deps.getToken();
-          return { items: [{ externalId: "1", title: "via " + token, body: "" }], cursor: "next" };
+          return { items: [{ key: "1", occurredAt: "2026-10-20T10:00:00.000Z", title: "via " + token + " since " + since, body: "" }] };
         },
       };
     }`,
@@ -627,7 +627,7 @@ test("test-poll runs poll() for real without creating tasks or storing a cursor"
   expect(response.status).toBe(200);
   const body = (await response.json()) as { itemCount: number; sample: { title: string }[] };
   expect(body.itemCount).toBe(1);
-  expect(body.sample[0]?.title).toBe("via secret");
+  expect(body.sample[0]?.title).toBe("via secret since null");
 
   expect(getCursor(db, "notion")).toBeNull();
   expect(listTasks(db)).toEqual([]);
@@ -639,7 +639,7 @@ test("test-poll surfaces a not-connected error without throwing", async () => {
   await mkdir(join(dir, "notion"), { recursive: true });
   await writeFile(
     join(dir, "notion", "source.ts"),
-    `export function createSource() { return { async poll() { return { items: [], cursor: null }; } }; }`,
+    `export function createSource() { return { async list() { return { items: [] }; } }; }`,
   );
   await discoverExtensions(db, dir);
 
@@ -714,7 +714,7 @@ test("delete of an unknown extension is a 404", async () => {
 test("fix reads the current files and stages a corrected draft under the same id", async () => {
   const fixedManifest = { ...apiKeyManifest, id: "renamed-by-model" };
   const fixedSource = `export function createSource(deps) {
-    return { async poll(cursor) { return { items: [], cursor }; } };
+    return { async list({ since }) { return { items: [] }; } };
   }`;
   const runAgent: AgentRunner = {
     id: "stub",
@@ -728,7 +728,7 @@ test("fix reads the current files and stages a corrected draft under the same id
   await mkdir(join(dir, "notion"), { recursive: true });
   await writeFile(
     join(dir, "notion", "source.ts"),
-    `export function createSource() { return { async poll() { throw new Error("bad url"); } }; }`,
+    `export function createSource() { return { async list() { throw new Error("bad url"); } }; }`,
   );
   await discoverExtensions(db, dir);
 
@@ -752,7 +752,7 @@ test("fix reads the current files and stages a corrected draft under the same id
   expect(await approved.json()).toEqual({ extensionId: "notion" });
 
   const sourceAfterFix = await readFile(join(dir, "notion", "source.ts"), "utf8");
-  expect(sourceAfterFix).toContain("cursor");
+  expect(sourceAfterFix).toContain("list({ since })");
   expect(sourceAfterFix).not.toContain("bad url");
 });
 
@@ -762,7 +762,7 @@ test("fix requires a non-empty error", async () => {
   await mkdir(join(dir, "notion"), { recursive: true });
   await writeFile(
     join(dir, "notion", "source.ts"),
-    `export function createSource() { return { async poll() { return { items: [], cursor: null }; } }; }`,
+    `export function createSource() { return { async list() { return { items: [] }; } }; }`,
   );
   await discoverExtensions(db, dir);
 
@@ -800,7 +800,7 @@ test("approving a fix that changes auth.mode disconnects the stale credential, f
     },
   };
   const fixedSource = `export function createSource() {
-    return { async poll(cursor) { return { items: [], cursor }; } };
+    return { async list({ since }) { return { items: [] }; } };
   }`;
   const runAgent: AgentRunner = {
     id: "stub",
@@ -814,7 +814,7 @@ test("approving a fix that changes auth.mode disconnects the stale credential, f
   await mkdir(join(dir, "notion"), { recursive: true });
   await writeFile(
     join(dir, "notion", "source.ts"),
-    `export function createSource() { return { async poll() { throw new Error("needs oauth"); } }; }`,
+    `export function createSource() { return { async list() { throw new Error("needs oauth"); } }; }`,
   );
   await discoverExtensions(db, dir);
   await fetch(
@@ -849,7 +849,7 @@ test("approving a fix that changes auth.mode disconnects the stale credential, f
 
 test("approving a fix that keeps the same auth.mode leaves an existing connection intact", async () => {
   const fixedSource = `export function createSource() {
-    return { async poll(cursor) { return { items: [], cursor }; } };
+    return { async list({ since }) { return { items: [] }; } };
   }`;
   const runAgent: AgentRunner = {
     id: "stub",
@@ -863,7 +863,7 @@ test("approving a fix that keeps the same auth.mode leaves an existing connectio
   await mkdir(join(dir, "notion"), { recursive: true });
   await writeFile(
     join(dir, "notion", "source.ts"),
-    `export function createSource() { return { async poll() { throw new Error("bad url"); } }; }`,
+    `export function createSource() { return { async list() { throw new Error("bad url"); } }; }`,
   );
   await discoverExtensions(db, dir);
   await fetch(
@@ -899,7 +899,7 @@ test("approving a fix that keeps the same auth.mode leaves an existing connectio
 async function writeIdentitySource(dir: string, id: string, getIdentityBody: string): Promise<void> {
   await writeFile(
     join(dir, id, "source.ts"),
-    `export function createSource() { return { id: "${id}", async poll() { return { items: [], cursor: null }; } }; }
+    `export function createSource() { return { id: "${id}", async list() { return { items: [] }; } }; }
      export async function getIdentity(deps) { ${getIdentityBody} }`,
   );
 }

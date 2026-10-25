@@ -19,23 +19,32 @@ import { withConcurrencyLimit } from "./agent/limit";
 import { onTaskIngested, onTaskChanged, type AppDeps } from "./orchestrator";
 import { startPoller } from "./sources/poller";
 import { createSampleFolderSource } from "./sources/sample/folder";
-import type { LegacyRawItem, LegacyTaskSource, SourceItem } from "./sources/types";
-import { updateTask } from "./repo/tasks";
+import type { LegacyTaskSource, TaskSource } from "./sources/types";
 import { loadEnabledExtensionSources } from "./extensions/runtime";
 import { getSettings } from "./repo/settings";
 import { purgeExpiredAudit } from "./repo/audit";
 
-/** Transitional adapter for the legacy poller's change callback; Task 6/8
- *  remove it along with the legacy poller. */
-function legacyToSourceItem(item: LegacyRawItem): SourceItem {
+/** Temporary (deleted in Task 8 with the sample source): presents the legacy
+ *  sample-folder source as a list() source. Each file becomes an item keyed by
+ *  its externalId; files carry no date, so occurredAt is the time of listing. */
+function legacyAsListSource(legacy: LegacyTaskSource): TaskSource {
   return {
-    key: item.externalId,
-    occurredAt: new Date().toISOString(),
-    title: item.title,
-    body: item.body,
-    ...(item.url ? { url: item.url } : {}),
-    ...(item.metadata ? { metadata: item.metadata } : {}),
-    ...(item.participants ? { participants: item.participants } : {}),
+    id: legacy.id,
+    async list() {
+      const { items } = await legacy.poll(null);
+      return {
+        items: items.map((item) => ({
+          key: item.externalId,
+          occurredAt: new Date().toISOString(),
+          title: item.title,
+          body: item.body,
+          ...(item.url ? { url: item.url } : {}),
+          ...(item.metadata ? { metadata: item.metadata } : {}),
+          ...(item.participants ? { participants: item.participants } : {}),
+        })),
+        failures: [],
+      };
+    },
   };
 }
 
@@ -174,40 +183,33 @@ if (import.meta.main) {
     );
   }
 
-  const sources: LegacyTaskSource[] = [];
+  const sources: TaskSource[] = [];
   if (app.config.sampleDir) {
-    sources.push(createSampleFolderSource({ dir: app.config.sampleDir }));
+    sources.push(legacyAsListSource(createSampleFolderSource({ dir: app.config.sampleDir })));
     console.log(`Sample source watching ${app.config.sampleDir}`);
   }
 
   startPoller(
     app.deps.db,
     sources,
-    async (task) => {
-      try {
-        await onTaskIngested(app.deps, task);
-      } catch (error) {
-        console.error(`[orchestrator] task ${task.id} failed:`, error);
-      }
+    {
+      async onCreated(task) {
+        try {
+          await onTaskIngested(app.deps, task);
+        } catch (error) {
+          console.error(`[orchestrator] task ${task.id} failed:`, error);
+        }
+      },
+      async onChanged(task, newItems) {
+        try {
+          await onTaskChanged(app.deps, task, newItems);
+        } catch (error) {
+          console.error(`[orchestrator] reopen for task ${task.id} failed:`, error);
+        }
+      },
     },
     app.config.pollIntervalMs,
     () => loadEnabledExtensionSources(app.deps.db, app.config.extensionsDir, app.vault),
-    async (task, item) => {
-      try {
-        // Transitional until Task 6 wires the new poller (Task 8 deletes the
-        // legacy one): refresh the content and revision the way the old
-        // onTaskChanged did, then hand the item over as a SourceItem.
-        const updated = updateTask(app.deps.db, task.id, {
-          title: item.title,
-          body: item.body,
-          metadata: item.metadata ?? {},
-          context: { ...task.context, revision: item.revision },
-        });
-        await onTaskChanged(app.deps, updated, [legacyToSourceItem(item)]);
-      } catch (error) {
-        console.error(`[orchestrator] reopen for task ${task.id} failed:`, error);
-      }
-    },
   );
   if (!sources.length) {
     console.warn(
