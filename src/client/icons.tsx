@@ -40,6 +40,10 @@ export const ICONS: Record<string, string[]> = {
   "chevron-right": ["m9 18 6-6-6-6"],
   "arrow-left": ["m12 19-7-7 7-7", "M19 12H5"],
   x: ["M18 6 6 18", "m6 6 12 12"],
+  copy: ["M8 8h14v14H8z", "M4 16H2V2h14v2"],
+  check: ["M20 6 9 17l-5-5"],
+  /** Drawn at stroke-width 3 by its container (`.ext-more > button svg`). */
+  ellipsis: ["M5 12h.01", "M12 12h.01", "M19 12h.01"],
   users: [
     "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2",
     "M9 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8z",

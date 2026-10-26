@@ -48,11 +48,18 @@ export function App() {
   const [settledFrom, setSettledFrom] = useState("");
   const [settledTo, setSettledTo] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [failedTotal, setFailedTotal] = useState(0);
 
   const refresh = useCallback(async () => {
     const [nextTasks, nextTypes] = await Promise.all([api.tasks(), api.types()]);
     setTasks(nextTasks);
     setTypes(nextTypes);
+    try {
+      const extensions = await api.extensions();
+      setFailedTotal(extensions.reduce((sum, e) => sum + e.failedCount, 0));
+    } catch {
+      // keep the last total; the next refresh will try again
+    }
   }, []);
 
   useEffect(() => {
@@ -115,24 +122,35 @@ export function App() {
           )}
         </div>
         <nav className="rail-nav">
-          {NAV.map((n) => (
-            <button
-              key={n.key}
-              className={`rail-item ${railOpen ? "open" : ""} ${screen === n.key ? "on" : ""}`}
-              onClick={() => setScreen(n.key)}
-              onMouseEnter={() => setHoverNav(n.key)}
-              onMouseLeave={() => setHoverNav(null)}
-            >
-              <Icon name={n.icon} />
-              {railOpen && (
-                <span style={{ flex: 1, textAlign: "left" }}>
-                  {n.label}
-                  {n.key === "board" && needsCount > 0 ? ` (${needsCount})` : ""}
-                </span>
-              )}
-              {!railOpen && hoverNav === n.key && <span className="tip">{n.label}</span>}
-            </button>
-          ))}
+          {NAV.map((n) => {
+            const failedBadge = n.key === "extensions" && failedTotal > 0;
+            return (
+              <button
+                key={n.key}
+                className={`rail-item ${railOpen ? "open" : ""} ${screen === n.key ? "on" : ""}`}
+                aria-label={
+                  n.key === "extensions" ? (failedBadge ? `Extensions, ${failedTotal} failed` : "Extensions") : undefined
+                }
+                onClick={() => setScreen(n.key)}
+                onMouseEnter={() => setHoverNav(n.key)}
+                onMouseLeave={() => setHoverNav(null)}
+              >
+                <Icon name={n.icon} />
+                {railOpen && (
+                  <span style={{ flex: 1, textAlign: "left" }}>
+                    {n.label}
+                    {n.key === "board" && needsCount > 0 ? ` (${needsCount})` : ""}
+                  </span>
+                )}
+                {failedBadge && (
+                  <span className={railOpen ? "badge" : "badge corner"} aria-hidden="true">
+                    {failedTotal > 99 ? "99+" : failedTotal}
+                  </span>
+                )}
+                {!railOpen && hoverNav === n.key && <span className="tip">{n.label}</span>}
+              </button>
+            );
+          })}
         </nav>
         <div className="rail-foot">
           {railOpen ? (
@@ -220,7 +238,7 @@ export function App() {
           ) : screen === "people" ? (
             <People onSummaryChange={setPeopleSummary} />
           ) : screen === "extensions" ? (
-            <Extensions />
+            <Extensions onFailedTotalChange={setFailedTotal} />
           ) : (
             <Settings />
           )}

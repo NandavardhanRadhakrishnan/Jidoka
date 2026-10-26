@@ -6,9 +6,28 @@ import type { Hint } from "../domain/hint";
 import type { ExtensionAuth } from "../domain/extension";
 import type { ToolSpec } from "../ai/provider";
 import type { Org, Person, ResolvedParticipant, Roster } from "../domain/roster";
+import type { PollRecord } from "../repo/sourcePolls";
+import type { SourceItemRow } from "../repo/sourceItems";
+import type { SourceItem } from "../sources/types";
 
 export type { Rule };
 export type { Hint };
+export type { PollRecord, SourceItemRow };
+
+/** An item the test poll would file (the same shape `list()` returns). */
+export type TestPollItem = SourceItem;
+export type PreviewFailure = { key?: string; error: string };
+export type TestPollResult = { items: TestPollItem[]; failures: PreviewFailure[]; checkFailures: PreviewFailure[] };
+
+/** A non-2xx response; `status` lets callers tell a 404 from other failures. */
+export class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
 
 export interface ModelOption {
   id: string;
@@ -64,6 +83,8 @@ export interface ExtensionListItem {
   valid: boolean;
   error: string | null;
   status: "connected" | "not_connected" | "needs_reauth" | "unknown" | "invalid";
+  lastPoll: PollRecord | null;
+  failedCount: number;
 }
 
 export interface GeneratedManifest {
@@ -85,7 +106,7 @@ async function json<T>(input: string, init?: RequestInit): Promise<T> {
     headers: { "content-type": "application/json", ...(init?.headers ?? {}) },
   });
   const body = (await response.json()) as T & { error?: string };
-  if (!response.ok) throw new Error(body.error ?? `request failed: ${response.status}`);
+  if (!response.ok) throw new ApiError(body.error ?? `request failed: ${response.status}`, response.status);
   return body;
 }
 
@@ -235,10 +256,21 @@ export const api = {
   discardGeneration: (generationId: string) =>
     json<{ discarded: true }>(`/api/extensions/generate/${generationId}/discard`, { method: "POST" }),
   testPoll: (id: string) =>
-    json<{ itemCount: number; sample: { externalId: string; title: string; body: string }[] }>(
-      `/api/extensions/${id}/test-poll`,
-      { method: "POST" },
-    ),
+    json<TestPollResult>(`/api/extensions/${id}/test-poll`, { method: "POST" }),
+  polls: (id: string) =>
+    json<{ polls: PollRecord[] }>(`/api/extensions/${id}/polls`).then((r) => r.polls),
+  failures: (id: string) =>
+    json<{ failures: SourceItemRow[] }>(`/api/extensions/${id}/failures`).then((r) => r.failures),
+  retryFailure: (id: string, key: string) =>
+    json<{ poll: PollRecord }>(`/api/extensions/${id}/failures/${encodeURIComponent(key)}/retry`, {
+      method: "POST",
+    }).then((r) => r.poll),
+  dismissFailure: (id: string, key: string) =>
+    json<{ dismissed: true }>(`/api/extensions/${id}/failures/${encodeURIComponent(key)}/dismiss`, {
+      method: "POST",
+    }),
+  rescanSource: (id: string) =>
+    json<{ recovered: number; poll: PollRecord }>(`/api/extensions/${id}/rescan`, { method: "POST" }),
   deleteExtension: (id: string) =>
     json<{ deleted: true }>(`/api/extensions/${id}/delete`, { method: "POST" }),
   fixExtension: (id: string, error: string) =>
